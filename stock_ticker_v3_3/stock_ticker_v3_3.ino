@@ -3,7 +3,8 @@
  * Board: ESP32-2432S028 ("Cheap Yellow Display")
  *
  * Displays live stock, ETF, crypto, and commodity prices in PLN on the built-in 320x240 TFT.
- * Features automated sorting by total PLN portfolio value and web configuration panel.
+ * Features automated sorting by total PLN portfolio value, web configuration panel,
+ * and market status/countdown based on standard market opening hours.
  */
 
 #include <WiFi.h>
@@ -40,7 +41,7 @@ WebServer           server(80);
 
 // ─── Configuration constants ──────────────────────────────────────────────────
 #define MAX_TICKERS     8
-#define DEFAULT_REFRESH 15
+#define DEFAULT_REFRESH 60
 #define MIN_REFRESH     10
 #define HEADER_H        26
 #define FOOTER_H        18
@@ -67,6 +68,8 @@ struct Quote {
   String currency;
   bool   valid;
   int    errors;
+  bool   isClosed;
+  long   timeRemaining;
 };
 
 Quote quotes[MAX_TICKERS];
@@ -146,6 +149,20 @@ String getCurrencySymbol(const String &curr) {
   return curr.length() > 0 ? curr + " " : "$";
 }
 
+String formatCountdown(long seconds) {
+  if (seconds <= 0) return "soon";
+  long hours = seconds / 3600;
+  long mins = (seconds % 3600) / 60;
+  if (hours > 24) {
+    long days = hours / 24;
+    return "in " + String(days) + "d " + String(hours % 24) + "h";
+  }
+  if (hours > 0) {
+    return "in " + String(hours) + "h " + String(mins) + "m";
+  }
+  return "in " + String(mins) + "m";
+}
+
 
 // ─── Preferences (NVS) ───────────────────────────────────────────────────────
 void loadPrefs() {
@@ -172,9 +189,11 @@ void loadPrefs() {
   }
 
   for (int i = 0; i < tickerCount; i++) {
-    quotes[i]          = Quote{};
-    quotes[i].sym      = tickers[i];
-    quotes[i].currency = "USD";
+    quotes[i]               = Quote{};
+    quotes[i].sym           = tickers[i];
+    quotes[i].currency      = "USD";
+    quotes[i].isClosed      = false;
+    quotes[i].timeRemaining = 0;
   }
 }
 
@@ -195,7 +214,62 @@ void savePrefs() {
 }
 
 
-// ─── API: Yahoo Finance ───────────────────────────────────────────────────────
+// ─── API: Yahoo Finance & Static Hours Check ──────────────────────────────────
+void updateMarketStatus(Quote &q) {
+  // Cryptocurrencies are always open
+  if (q.sym.indexOf("BTC") != -1 || q.sym.indexOf("ETH") != -1 || q.sym.indexOf("-USD") != -1) {
+    q.isClosed = false;
+    q.timeRemaining = 0;
+    return;
+  }
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  int wday = timeinfo.tm_wday; // 0 = Sunday, 6 = Saturday
+  int hour = timeinfo.tm_hour;
+  int min  = timeinfo.tm_min;
+  int totalMins = hour * 60 + min;
+
+  // Weekend check
+  if (wday == 0 || wday == 6) {
+    q.isClosed = true;
+    int daysUntilMon = (wday == 6) ? 2 : 1;
+    long minsToOpen = (daysUntilMon * 24 * 60) - totalMins + (9 * 60);
+    q.timeRemaining = minsToOpen * 60;
+    return;
+  }
+
+  // European exchanges (~ 9:00 - 17:30 local time)
+  if (q.sym.endsWith(".DE") || q.sym.endsWith(".PA") || q.sym.endsWith(".L") || q.sym.endsWith(".AS")) {
+    if (totalMins < 9 * 60) {
+      q.isClosed = true;
+      q.timeRemaining = ((9 * 60) - totalMins) * 60;
+    } else if (totalMins > 17 * 60 + 30) {
+      q.isClosed = true;
+      long minsToOpen = (24 * 60 - totalMins) + (9 * 60);
+      q.timeRemaining = minsToOpen * 60;
+    } else {
+      q.isClosed = false;
+      q.timeRemaining = ((17 * 60 + 30) - totalMins) * 60;
+    }
+    return;
+  }
+
+  // Default US exchanges (NYSE / NASDAQ): 9:30 - 16:00 ET = 15:30 - 22:00 CET
+  if (totalMins < 15 * 60 + 30) {
+    q.isClosed = true;
+    q.timeRemaining = ((15 * 60 + 30) - totalMins) * 60;
+  } else if (totalMins > 22 * 60) {
+    q.isClosed = true;
+    long minsToOpen = (24 * 60 - totalMins) + (15 * 60 + 30);
+    q.timeRemaining = minsToOpen * 60;
+  } else {
+    q.isClosed = false;
+    q.timeRemaining = ((22 * 60) - totalMins) * 60;
+  }
+}
+
 void fetchYahoo(int idx) {
   String sym = tickers[idx];
   String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + sym + "?interval=1d&range=1d";
@@ -217,7 +291,7 @@ void fetchYahoo(int idx) {
       JsonObject meta = doc["chart"]["result"][0]["meta"];
       if (!meta.isNull()) {
         float price     = meta["regularMarketPrice"] | 0.0f;
-        float prevClose = meta["chartPreviousClose"] | meta["regularMarketPreviousClose"] | meta["previousClose"] | 0.0f;
+        float prevClose = meta["chartPreviousClose"] | (meta["previousClose"] | 0.0f);
         const char* curr = meta["currency"] | "USD";
 
         if (price > 0) {
@@ -226,12 +300,23 @@ void fetchYahoo(int idx) {
           q.pct      = (prevClose > 0) ? ((price - prevClose) / prevClose * 100.0f) : 0.0f;
           q.currency = String(curr);
           q.currency.toUpperCase();
+          
+          updateMarketStatus(q);
+
           q.valid    = true;
           q.errors   = 0;
-        } else q.errors++;
-      } else q.errors++;
-    } else q.errors++;
-  } else q.errors++;
+        } else {
+          q.errors++;
+        }
+      } else {
+        q.errors++;
+      }
+    } else {
+      q.errors++;
+    }
+  } else {
+    q.errors++;
+  }
   
   http.end();
 
@@ -459,7 +544,7 @@ void drawQuoteGrid(int idx, Quote &q) {
   float dOpen  = conv ? q.open * rate  : q.open;
   String cSym  = conv ? "PLN " : getCurrencySymbol(q.currency);
 
-  uint16_t pctColor = (q.pct > 0.05f) ? C_UP : (q.pct < -0.05f) ? C_DOWN : C_FLAT;
+  uint16_t pctColor = q.isClosed ? C_MUTED() : ((q.pct > 0.05f) ? C_UP : (q.pct < -0.05f) ? C_DOWN : C_FLAT);
 
   char priceBuf[24];
   if      (dPrice >= 10000) sprintf(priceBuf, "%s%.0f",  cSym.c_str(), dPrice);
@@ -476,7 +561,7 @@ void drawQuoteGrid(int idx, Quote &q) {
 
   int lineY1 = portfolioMode && holdings[idx] > 0 ? y + cellH / 3 - 2 : y + cellH / 2;
 
-  tft.setTextColor(C_LABEL(), C_PANEL());
+  tft.setTextColor(q.isClosed ? C_MUTED() : C_LABEL(), C_PANEL());
   tft.setTextDatum(ML_DATUM);
   tft.drawString(symStr, x + 6, lineY1, fnt);
 
@@ -484,7 +569,7 @@ void drawQuoteGrid(int idx, Quote &q) {
   tft.setTextDatum(MR_DATUM);
   tft.drawString(pctBuf, x + cellW - 6, lineY1, fnt);
 
-  tft.setTextColor(C_TEXT(), C_PANEL());
+  tft.setTextColor(q.isClosed ? C_MUTED() : C_TEXT(), C_PANEL());
   tft.setTextDatum(MC_DATUM);
   tft.drawString(priceBuf, x + cellW / 2, lineY1, fnt);
 
@@ -492,10 +577,17 @@ void drawQuoteGrid(int idx, Quote &q) {
     float val   = dPrice * holdings[idx];
     float dayPL = (dPrice - dOpen) * holdings[idx];
     char portBuf[32];
-    if (val >= 1000) sprintf(portBuf, "W:%.0f  P/L:%+.0f", val, dayPL);
-    else             sprintf(portBuf, "W:%.2f  P/L:%+.2f", val, dayPL);
     
-    tft.setTextColor(dayPL >= 0 ? (uint16_t)C_UP : (uint16_t)C_DOWN, C_PANEL());
+    if (q.isClosed) {
+      if (val >= 1000) sprintf(portBuf, "CLOSED P/L:%+.0f", dayPL);
+      else             sprintf(portBuf, "CLOSED P/L:%+.2f", dayPL);
+    } else {
+      if (val >= 1000) sprintf(portBuf, "W:%.0f  P/L:%+.0f", val, dayPL);
+      else             sprintf(portBuf, "W:%.2f  P/L:%+.2f", val, dayPL);
+    }
+    
+    uint16_t plColor = q.isClosed ? C_MUTED() : (dayPL >= 0 ? (uint16_t)C_UP : (uint16_t)C_DOWN);
+    tft.setTextColor(plColor, C_PANEL());
     tft.setTextDatum(MC_DATUM);
     tft.drawString(portBuf, x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
   }
@@ -527,11 +619,20 @@ void drawDetail(int idx, Quote &q) {
   float dOpen  = conv ? q.open * rate  : q.open;
   String cSym  = conv ? "PLN " : getCurrencySymbol(q.currency);
 
-  uint16_t pctColor = (q.pct > 0.05f) ? C_UP : (q.pct < -0.05f) ? C_DOWN : C_FLAT;
+  uint16_t pctColor = q.isClosed ? C_MUTED() : ((q.pct > 0.05f) ? C_UP : (q.pct < -0.05f) ? C_DOWN : C_FLAT);
 
   tft.setTextColor(C_LABEL(), C_BG());
   tft.setTextDatum(TL_DATUM);
   tft.drawString(displaySym(q.sym), 10, 42, 4);
+
+  if (q.isClosed) {
+    tft.setTextColor(C_MUTED(), C_BG());
+    String closedStr = "CLOSED";
+    if (q.timeRemaining > 0) {
+      closedStr += " (opens " + formatCountdown(q.timeRemaining) + ")";
+    }
+    tft.drawString(closedStr, 10, 68, 2);
+  }
 
   char buf[32];
   if      (dPrice >= 10000) sprintf(buf, "%s%.0f",  cSym.c_str(), dPrice);
@@ -710,8 +811,17 @@ void handleRoot() {
       plStr  = (d >= 0 ? "+" : "") + String(d, 2);
     }
     
+    String statusInfo = "";
+    if (quotes[i].isClosed) {
+      statusInfo = " <span style='font-size:10px;color:#888'>(Closed";
+      if (quotes[i].timeRemaining > 0) {
+        statusInfo += " - opens " + formatCountdown(quotes[i].timeRemaining);
+      }
+      statusInfo += ")</span>";
+    }
+
     rows += "<tr>"
-          + String("<td>") + sym + "</td>"
+          + String("<td>") + sym + statusInfo + "</td>"
           + "<td style='font-weight:700'>" + price + "</td>"
           + "<td style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
           + "<td>" + valStr + "</td>"
@@ -840,6 +950,8 @@ void handleSave() {
           quotes[tickerCount]    = Quote{};
           quotes[tickerCount].sym      = t;
           quotes[tickerCount].currency = "USD";
+          quotes[tickerCount].isClosed = false;
+          quotes[tickerCount].timeRemaining = 0;
           tickerCount++;
         }
         start = i + 1;
@@ -891,7 +1003,8 @@ void handleApiQuotes() {
           + "\"pct\":"              + String(quotes[i].pct, 2)   + ","
           + "\"nativePrice\":"      + String(quotes[i].price, 4) + ","
           + "\"nativeCurrency\":\"" + quotes[i].currency         + "\","
-          + "\"valid\":"            + (quotes[i].valid ? "true" : "false") + "}";
+          + "\"valid\":"            + (quotes[i].valid ? "true" : "false") + ","
+          + "\"isClosed\":"         + (quotes[i].isClosed ? "true" : "false") + "}";
   }
   xSemaphoreGive(dataMutex);
   json += "]";
@@ -959,7 +1072,7 @@ void setup() {
   tft.setTextColor(TFT_CYAN, C_BG());
   tft.setTextDatum(MC_DATUM);
   tft.drawString("Syncing time...", 160, 120, 2);
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(3600, 3600, "pool.ntp.org", "time.nist.gov");
 
   tft.fillScreen(C_BG());
   tft.setTextColor(TFT_GREEN, C_BG());
