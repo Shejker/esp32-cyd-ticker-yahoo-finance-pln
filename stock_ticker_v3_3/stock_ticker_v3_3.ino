@@ -48,9 +48,7 @@ struct Quote {
   bool   valid;
   int    errors;
   bool   isClosed;
-  long   timeRemaining; // Minutes to open
-  
-  // Sparkline data
+  long   timeRemaining; // minutes to open
   float  sparkline[MAX_SPARK_POINTS];
   int    sparkCount;
 };
@@ -152,6 +150,7 @@ void loadPrefs() {
   darkMode      = prefs.getBool("dark",      true);
   portfolioMode = prefs.getBool("portfolio", false);
   tickerCount   = prefs.getInt("tcount",     0);
+  if (tickerCount < 0 || tickerCount > MAX_TICKERS) tickerCount = 0;
 
   for (int i = 0; i < tickerCount; i++) {
     tickers[i]   = prefs.getString(("t"  + String(i)).c_str(), "");
@@ -227,7 +226,7 @@ void updateMarketStatus(Quote &q) {
   }
 
   if (q.isClosed) {
-    q.timeRemaining = (daysToOpen * 24 * 60) - mins + openTime; // minutes
+    q.timeRemaining = (daysToOpen * 24 * 60) - mins + openTime;
   } else {
     q.timeRemaining = 0;
   }
@@ -256,8 +255,7 @@ void fetchYahoo(int idx) {
           q.currency = String((const char*)(meta["currency"] | "USD"));
           q.currency.toUpperCase();
           updateMarketStatus(q);
-          
-          // Parse sparkline
+
           JsonArray closeArr = doc["chart"]["result"][0]["indicators"]["quote"][0]["close"];
           if (!closeArr.isNull()) {
             for (JsonVariant v : closeArr) {
@@ -351,7 +349,6 @@ void checkAlerts() {
   }
 }
 
-// Main background fetch task
 void fetchTask(void* param) {
   for (;;) {
     if (fetchPending) {
@@ -444,8 +441,7 @@ void drawPortfolioFooter() {
   if (!anyH) return;
   
   tft.fillRect(0, 240 - FOOTER_H, 320, FOOTER_H, C_HEADER());
-  
-  // Color based on dayPL
+
   uint16_t plColor = (dayPL >= 0) ? C_UP() : C_DOWN();
   tft.setTextColor(plColor, C_HEADER());
   tft.setTextDatum(MC_DATUM);
@@ -545,20 +541,7 @@ void drawDetailView(int idx) {
 
   if (q.isClosed) {
     tft.setTextColor(C_MUTED());
-    // Format time remaining with days if needed
-    long totalMinutes = q.timeRemaining; // minutes
-    long days = totalMinutes / (24 * 60);
-    long hours = (totalMinutes % (24 * 60)) / 60;
-    long mins = totalMinutes % 60;
-    String timeStr;
-    if (days > 0) {
-      timeStr = String(days) + "d " + String(hours) + "h " + String(mins) + "m";
-    } else if (hours > 0) {
-      timeStr = String(hours) + "h " + String(mins) + "m";
-    } else {
-      timeStr = String(mins) + "m";
-    }
-    tft.drawString("Opens in: " + timeStr, 160, HEADER_H + 165, 2);
+    tft.drawString("Opens " + formatCountdown(q.timeRemaining * 60L), 160, HEADER_H + 165, 2);
   }
 
   tft.setTextDatum(MR_DATUM);
@@ -568,6 +551,7 @@ void drawDetailView(int idx) {
 
 void drawAll() {
   xSemaphoreTake(dataMutex, portMAX_DELAY);
+  if (detailIdx >= tickerCount) { detailIdx = 0; viewMode = VIEW_GRID; }
   drawHeader();
   if (viewMode == VIEW_GRID) {
     tft.fillRect(0, HEADER_H, 320, gridAreaHeight(), C_BG());
@@ -589,6 +573,7 @@ void handleTouch() {
     int tx = map(p.x, 200, 3800, 0, 320), ty = map(p.y, 200, 3800, 0, 240);
 
     if (viewMode == VIEW_GRID) {
+      if (tickerCount == 0) return;
       int cols = (tickerCount <= 4) ? 1 : 2;
       int idx = ((ty - HEADER_H) / (gridAreaHeight() / ((tickerCount + cols - 1) / cols))) * cols + (tx / (320 / cols));
       if (idx >= 0 && idx < tickerCount) { detailIdx = idx; viewMode = VIEW_DETAIL; drawAll(); }
@@ -619,10 +604,9 @@ String formatCountdown(long seconds) {
 }
 
 void handleRoot() {
-  // --- Synchronize data under mutex first ---
   xSemaphoreTake(dataMutex, portMAX_DELAY);
-  
-  // Make a local copy of all relevant data to avoid mixing indices
+
+  // Local copy to avoid index mixing while mutex is held
   String localTickers[MAX_TICKERS];
   float localHoldings[MAX_TICKERS];
   float localAlertHigh[MAX_TICKERS];
@@ -637,8 +621,7 @@ void handleRoot() {
     localAlertLow[i] = alertLow[i];
     localQuotes[i] = quotes[i];
   }
-  
-  // Now sort the local copies if portfolio mode is enabled
+
   if (portfolioMode) {
     for (int i = 0; i < localTickerCount - 1; i++) {
       for (int j = 0; j < localTickerCount - i - 1; j++) {
@@ -659,15 +642,13 @@ void handleRoot() {
       }
     }
   }
-  
-  // Build ticker list string from local data
+
   String tickerList = "";
   for (int i = 0; i < localTickerCount; i++) {
     if (i) tickerList += ",";
     tickerList += localTickers[i];
   }
 
-  // Build rows from local data
   String rows = "";
   float totalVal = 0, totalPL = 0;
   bool anyMissing = false;
@@ -718,7 +699,6 @@ void handleRoot() {
           + "</tr>";
   }
 
-  // Build holdings rows
   String holdRows = "";
   for (int i = 0; i < localTickerCount; i++) {
     holdRows += "<tr><td>" + localTickers[i] + "</td>"
@@ -730,11 +710,8 @@ void handleRoot() {
       + "' step='any' min='0' placeholder='0=off' style='width:90px'></td></tr>";
   }
 
-  // Update global tickerCount if changed
-  tickerCount = localTickerCount;
   xSemaphoreGive(dataMutex);
 
-  // --- Generate HTML ---
   const char* bg    = darkMode ? "#0a0a0f" : "#f0f0f5";
   const char* card  = darkMode ? "#13131a" : "#ffffff";
   const char* bord  = darkMode ? "#222230" : "#d0d0e0";
@@ -745,9 +722,6 @@ void handleRoot() {
   const char* hint  = darkMode ? "#444"    : "#999";
   String dmChk = darkMode      ? " checked" : "";
   String pmChk = portfolioMode ? " checked" : "";
-
-  // Color for portfolio footer in HTML
-  String plColor = (totalPL >= 0) ? "#00cc44" : "#ff4444";
 
   String html =
     "<!DOCTYPE html><html><head>"
@@ -834,7 +808,6 @@ void handleRoot() {
 }
 
 void handleSave() {
-  // --- Parse and save data ---
   if (server.hasArg("tickers")) {
     String raw = server.arg("tickers");
     xSemaphoreTake(dataMutex, portMAX_DELAY);
@@ -886,7 +859,6 @@ void handleSave() {
   fetchPending = true;
   drawAll();
 
-  // --- Send nice redirect page ---
   const char* rbg = darkMode ? "#0a0a0f" : "#f0f0f5";
   const char* rfg = darkMode ? "#00cc44" : "#1a1a2e";
   server.send(200, "text/html; charset=utf-8",
@@ -901,7 +873,7 @@ void handleSave() {
     + "</head><body>"
     + "<h1>✅</h1>"
     + "<p>Settings saved!</p>"
-    + "<p style='font-size:14px;margin-top:12px;opacity:0.5'>Redirecting...</p>"
+    + "<p style='position:fixed;bottom:24px;left:0;right:0;font-size:13px;opacity:0.4;text-align:center'>Redirecting...</p>"
     + "</body></html>");
 }
 
@@ -944,7 +916,7 @@ void handleForceRefresh() {
     + "</head><body>"
     + "<h1>🔄</h1>"
     + "<p>Refreshed!</p>"
-    + "<p style='font-size:14px;margin-top:12px;opacity:0.5'>Redirecting...</p>"
+    + "<p style='position:fixed;bottom:24px;left:0;right:0;font-size:13px;opacity:0.4;text-align:center'>Redirecting...</p>"
     + "</body></html>");
 }
 
