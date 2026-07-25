@@ -487,7 +487,7 @@ void drawQuoteGrid(int idx, Quote &q) {
     if (q.isClosed) {
       bText = "CLOSED";
     } else {
-      bText = "W:" + String(dP*holdings[idx],0) + " P/L:" + (pl>=0?"+":"") + String(pl,0);
+      bText = "V:" + String(dP*holdings[idx],0) + " P/L:" + (pl>=0?"+":"") + String(pl,0);
     }
     tft.drawString(bText, x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
   } else if (q.isClosed && cellH >= 40) {
