@@ -427,14 +427,16 @@ void drawHeader() {
 
 void drawPortfolioFooter() {
   if (!portfolioMode) return;
-  float total = 0, dayPL = 0; bool anyH = false;
+  double total = 0, dayPL = 0; bool anyH = false;
+  
   for (int i = 0; i < tickerCount; i++) {
     if (quotes[i].valid && holdings[i] > 0) {
       float r = getRateToPLN(quotes[i].currency);
-      float p = (r > 0) ? quotes[i].price * r : quotes[i].price;
-      float o = (r > 0) ? quotes[i].open * r : quotes[i].open;
+      double p = (r > 0) ? (double)quotes[i].price * r : (double)quotes[i].price;
+      double o = (r > 0) ? (double)quotes[i].open * r : (double)quotes[i].open;
+      
       total += p * holdings[i];
-      if (!quotes[i].isClosed) dayPL += (p - o) * holdings[i];
+      dayPL += (p - o) * holdings[i];
       anyH = true;
     }
   }
@@ -476,15 +478,10 @@ void drawQuoteGrid(int idx, Quote &q) {
   tft.drawString(formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency)), x + cellW / 2, lineY, 2);
 
   if (portfolioMode && holdings[idx] > 0 && cellH >= 40) {
-    float pl = (dP - dO) * holdings[idx];
+    double pl = ((double)dP - (double)dO) * holdings[idx];
     tft.setTextColor(q.isClosed ? C_MUTED() : (pl >= 0 ? C_UP() : C_DOWN()), C_PANEL());
     
-    String bText = "";
-    if (q.isClosed) {
-      bText = "CLOSED";
-    } else {
-      bText = "V:" + String(dP*holdings[idx],0) + " P/L:" + (pl>=0?"+":"") + String(pl,0);
-    }
+    String bText = "V:" + String(dP*holdings[idx],0) + " P/L:" + (pl>=0?"+":"") + String(pl,0);
     tft.drawString(bText, x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
   } else if (q.isClosed && cellH >= 40) {
     tft.setTextColor(C_MUTED(), C_PANEL());
@@ -650,7 +647,7 @@ void handleRoot() {
   }
 
   String rows = "";
-  float totalVal = 0, totalPL = 0;
+  double totalVal = 0, totalPL = 0;
   bool anyMissing = false;
 
   for (int i = 0; i < localTickerCount; i++) {
@@ -674,8 +671,8 @@ void handleRoot() {
                    
     String valStr = "", plStr = "";
     if (localQuotes[i].valid && localHoldings[i] > 0) {
-      float v = dPrice * localHoldings[i];
-      float d = (dPrice - dOpen) * localHoldings[i];
+      double v = (double)dPrice * localHoldings[i];
+      double d = ((double)dPrice - (double)dOpen) * localHoldings[i];
       totalVal += v; totalPL += d;
       valStr = cSym + String(v, 2);
       plStr  = (d >= 0 ? "+" : "") + String(d, 2);
