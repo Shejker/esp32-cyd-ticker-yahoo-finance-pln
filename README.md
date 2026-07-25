@@ -1,10 +1,9 @@
-# ESP32 CYD Stock Ticker (Fork by Doman)
+# ESP32 CYD Stock Ticker — PLN Fork
 
-A stock and cryptocurrency price tracker for the ESP32 Cheap Yellow Display (CYD / ESP32-2432S028).  
-Displays live prices, percentage change, and portfolio value on the built-in 2.8" TFT touchscreen.  
-Configured entirely via a browser, no code changes required.
+A live stock, ETF, crypto, and commodity price tracker for the [ESP32 Cheap Yellow Display](https://zaitronics.com.au/collections/esp32/products/esp32-with-2-8-lcd-tft-touch-screen-capacitive-wifi-bluetooth-dev-board) (ESP32-2432S028).  
+Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully configured from a browser — no code changes needed.
 
-*Note: This is an enhanced fork created by **Doman**.*
+> Fork of [MaWe88/esp32-cyd-ticker](https://github.com/MaWe88/esp32-cyd-ticker) with significant rewrites. See [Changes from original](#changes-from-original) below.
 
 ![ESP32 CYD Stock Ticker showing 3 tickers](https://cdn.shopify.com/s/files/1/0870/0021/9940/files/20260617_125927.jpg?v=1781667798)
 
@@ -14,49 +13,33 @@ Configured entirely via a browser, no code changes required.
 
 ---
 
-## What's New in this Fork (v3.4)
+## Changes from Original
 
-This version introduces significant enhancements, full web configuration, and a refined user experience:
-
-### 🔹 Full Web Configuration Interface
-- **Complete browser-based setup** – change tickers, holdings, alerts, and display settings from any device on your network.
-- **Live price table** with automatic sorting in portfolio mode.
-- **JSON API endpoint** (`/api/quotes`) for home automation and external integrations.
-
-### 🔹 Intelligent Market Status & Countdowns
-- Automatic detection of European and US market opening hours.
-- **Precise countdown timers** showing time until market opens (e.g., `2d 13h 30m`).
-- 24/7 support for cryptocurrencies.
-
-### 🔹 Enhanced Portfolio Management
-- **Automatic sorting** of assets by total PLN value (descending).
-- **Color-coded Day P&L** – green for positive, red for negative.
-- Holdings and alert configuration directly from the web UI.
-
-### 🔹 Polish & Refinement
-- **Full English localization** – cleaner, consistent UI labels and time formatting.
-- **Improved redirect pages** with clear feedback (`✅ Settings saved!`, `🔄 Refreshed!`).
-- **Wider, centered layout** optimized for desktop and mobile browsers.
-- **WiFi connection screens** with clear status and IP display.
-
-### 🔹 Code Quality & Performance
-- **Thread-safe data handling** using FreeRTOS mutexes.
-- **Optimized background fetching** – no UI lag during updates.
-- **Cleaner, more maintainable code** with removed legacy dependencies.
+| | Original (MaWe88) | This fork |
+|---|---|---|
+| **Data source** | CoinGecko + Finnhub (API keys required) | Yahoo Finance (no API keys) |
+| **Currency** | USD | Automatic conversion to PLN |
+| **Tickers** | Up to 5 crypto + 10 stocks | Up to 8, any mix |
+| **Portfolio** | — | Holdings, day P&L, auto-sort by value |
+| **Market status** | — | Open/closed detection + countdown timer |
+| **Touch** | — | Tap ticker → detail view |
+| **Theme** | — | Dark / light mode |
+| **API** | — | JSON endpoint at `/api/quotes` |
+| **Architecture** | Single-threaded | FreeRTOS tasks + mutex |
 
 ---
 
 ## Features
 
-- Live stock, ETF, crypto, and commodity prices via Yahoo Finance (no API keys needed)
-- Automatic currency conversion to PLN
-- Touch to drill into detail view for any ticker
-- Portfolio mode — track holdings value, day P&L, and automatic sorting by value
-- Price alerts with LED flash on breach (based on converted PLN prices)
-- Market open/closed status with smart countdown timers (days/hours/minutes)
+- Live prices for stocks, ETFs, crypto, commodities, and forex via Yahoo Finance
+- Automatic currency conversion to PLN for all assets
+- Touch any ticker to open a detail view with sparkline
+- Portfolio mode — track holdings value, day P&L, and sort by PLN value
+- Price alerts with RGB LED flash (based on converted PLN price)
+- Market open/closed status with countdown timers (e.g. `1d 13h 30m`)
 - Dark and light mode
-- **Full web UI for configuration** — change tickers, refresh rate, brightness, holdings and alerts from any browser
-- **JSON API endpoint** at `/api/quotes` for home automation integration
+- Full web UI — change tickers, refresh rate, brightness, holdings, and alerts from any browser
+- JSON API at `/api/quotes` for home automation
 - WiFiManager captive portal — no hardcoded credentials
 
 ![ESP32 CYD Stock Ticker showing 8 tickers in 2 column grid](https://cdn.shopify.com/s/files/1/0870/0021/9940/files/20260617_130053.jpg?v=1781667798)
@@ -69,47 +52,54 @@ This version introduces significant enhancements, full web configuration, and a 
 
 ## Hardware
 
-- [ESP32 CYD (ESP32-2432S028)](https://zaitronics.com.au/collections/esp32/products/esp32-with-2-8-lcd-tft-touch-screen-capacitive-wifi-bluetooth-dev-board) — everything is built in, no wiring required
+- [ESP32 CYD (ESP32-2432S028)](https://zaitronics.com.au/collections/esp32/products/esp32-with-2-8-lcd-tft-touch-screen-capacitive-wifi-bluetooth-dev-board) — everything built in, no wiring required
 - USB-C cable and power supply
 
 ## Quick Start
 
-1. Flash the firmware
+1. Flash the firmware via Arduino IDE
 2. Connect to the `StockTicker-Setup` WiFi access point and enter your WiFi credentials
-3. Open the displayed IP address in your browser to configure tickers (all assets are evaluated in PLN)
+3. Open the IP address shown on the display in your browser and configure tickers
 
-## Web Configuration
+> After connecting to WiFi, the device is also reachable at **http://portfolio-tracker.local** (works on macOS, iOS, Windows 10/11).
 
-Once connected, open the displayed IP address in your browser:
+## Web UI
 
-### Main Page
-- **Live Prices** — real-time table with price, change, value, and day P&L
-- **Portfolio Summary** — total portfolio value and day P&L (color-coded)
-- **Force Refresh** — manually trigger data update
-- **JSON API** — raw data endpoint for automation
+Open the displayed IP in your browser. All values are shown and configured in PLN.
 
-### Settings
-- **Tickers** — comma-separated list of Yahoo Finance symbols (up to 8)
-- **Refresh Interval** — fetch frequency in seconds (minimum 10s)
-- **Backlight** — brightness control (10–255)
-- **Dark Mode** — toggle dark/light theme
-- **Portfolio Mode** — enable holdings, P&L tracking, and automatic sorting
-- **Holdings & Alerts** — set shares/units and alert thresholds (PLN)
+**Live Prices table** — price, % change, portfolio value, day P&L per ticker  
+**Force Refresh** — manually trigger a data fetch  
+**JSON API** — `/api/quotes` raw data for automation
 
-## Supported Ticker Formats
+**Settings:**
 
-Uses standard Yahoo Finance symbols:
-- US Stocks: `AAPL`, `MSFT`
-- European Stocks: `ANAV.DE`, `WEBN.DE`, `ASML.AS`
-- Cryptocurrencies: `BTC-USD`, `ETH-USD`
-- Commodities / Forex: `GC=F` (Gold), `EURPLN=X` (EUR to PLN)
+| Setting | Description |
+|---|---|
+| Tickers | Comma-separated Yahoo Finance symbols, up to 8 |
+| Refresh interval | Fetch frequency in seconds (min 10s) |
+| Backlight | Brightness 10–255 |
+| Dark mode | Toggle dark/light theme |
+| Portfolio mode | Enable holdings tracking, day P&L, and sort by value |
+| Holdings & Alerts | Shares/units and alert thresholds per ticker (PLN) |
 
-## API Endpoint
+## Ticker Symbols
+
+Standard Yahoo Finance format:
+
+| Type | Examples |
+|---|---|
+| US stocks | `AAPL`, `MSFT`, `NVDA` |
+| European stocks | `ANAV.DE`, `WEBN.DE`, `ASML.AS` |
+| Crypto | `BTC-USD`, `ETH-USD` |
+| Commodities | `GC=F` (Gold), `CL=F` (Oil) |
+| Forex | `EURPLN=X`, `USDPLN=X` |
+
+## API
 
 | Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/quotes` | GET | Returns all ticker data as JSON (pricePLN, pct, nativePrice, isClosed, etc.) |
-| `/refresh` | GET | Triggers an immediate data refresh |
+|---|---|---|
+| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `nativePrice`, `nativeCurrency`, `isClosed` |
+| `/refresh` | GET | Triggers an immediate data fetch |
 
 ## Dependencies
 
@@ -118,37 +108,19 @@ Install via Arduino Library Manager:
 - **TFT_eSPI** — display driver
 - **XPT2046_Touchscreen** — touch controller
 - **ArduinoJson** — JSON parsing
-- **WiFiManager** — WiFi configuration (tzapu)
+- **WiFiManager** — WiFi setup (tzapu)
 
 Board: `ESP32 Dev Module` via ESP32 Arduino core
 
-## TFT_eSPI Configuration
+## TFT_eSPI Setup
 
-Copy `User_Setup.h` from the `/config` folder into your TFT_eSPI library folder before compiling.  
-This configures the correct pins for the CYD.
+Copy `User_Setup.h` from the repo root into your TFT_eSPI library folder before compiling. This configures the correct pins for the CYD.
 
-## Troubleshooting
-
-### No data showing
-- Check that ticker symbols are valid on Yahoo Finance
-- Ensure the device has internet access
-- Try pressing **Force Refresh** in the web UI
-
-### Web UI not accessible
-- Verify the IP address displayed on the screen
-- Ensure your computer is on the same network
-- Check firewall settings
-
-### Touch not responding
-- Calibrate touch by pressing the four corners during boot (future version)
+---
 
 ## License
 
 MIT — free to use, modify, and distribute.
 
----
-
-Original project built by [Zaitronics](https://zaitronics.com.au) — electronics components and maker supplies, Melbourne AU.  
-Fork and modifications by **Doman**.
-
----
+Original project by [MaWe88](https://github.com/MaWe88/esp32-cyd-ticker).  
+Fork and modifications by Doman.
