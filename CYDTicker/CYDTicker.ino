@@ -636,14 +636,24 @@ void drawDetailView(int idx) {
 void drawAll() {
   xSemaphoreTake(dataMutex, portMAX_DELAY);
   if (detailIdx >= tickerCount) { detailIdx = 0; viewMode = VIEW_GRID; }
+
+  static int      prevTickerCount = -1;
+  static ViewMode prevViewMode    = VIEW_GRID;
+
   drawHeader();
+
   if (viewMode == VIEW_GRID) {
-    tft.fillRect(0, HEADER_H, 320, 240 - HEADER_H, C_BG());
+    if (tickerCount != prevTickerCount || prevViewMode != VIEW_GRID) {
+      tft.fillRect(0, HEADER_H, 320, 240 - HEADER_H, C_BG());
+    }
     for (int i = 0; i < tickerCount; i++) drawQuoteGrid(i, quotes[i]);
     if (portfolioMode) drawPortfolioFooter();
   } else {
     drawDetailView(detailIdx);
   }
+
+  prevTickerCount = tickerCount;
+  prevViewMode    = viewMode;
   xSemaphoreGive(dataMutex);
 }
 
