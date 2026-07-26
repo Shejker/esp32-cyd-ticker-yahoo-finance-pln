@@ -609,6 +609,16 @@ String formatCountdown(long seconds) {
   return "in " + String(mins) + "m";
 }
 
+void handleFavicon() {
+  server.send(200, "image/svg+xml",
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<rect x='4'  y='20' width='4.5' height='8'  rx='1' fill='#334155'/>"
+    "<rect x='11' y='15' width='4.5' height='13' rx='1' fill='#475569'/>"
+    "<rect x='18' y='10' width='4.5' height='18' rx='1' fill='#64748B'/>"
+    "<rect x='25' y='4'  width='4.5' height='24' rx='1' fill='#10B981'/>"
+    "</svg>");
+}
+
 void handleRoot() {
   xSemaphoreTake(dataMutex, portMAX_DELAY);
 
@@ -668,8 +678,9 @@ void handleRoot() {
     
     float dPrice = conv ? localQuotes[i].price * rate : localQuotes[i].price;
     float dOpen  = conv ? localQuotes[i].open * rate : localQuotes[i].open;
-    String cSym  = conv ? "PLN " : getCurrencySymbol(localQuotes[i].currency);
-    
+    String cSym  = (!conv && localQuotes[i].valid && localQuotes[i].currency != "PLN")
+                   ? getCurrencySymbol(localQuotes[i].currency) : "";
+
     String price = localQuotes[i].valid ? cSym + String(dPrice, 2) : "--";
     String pct   = localQuotes[i].valid
                    ? (localQuotes[i].pct >= 0 ? "+" : "") + String(localQuotes[i].pct, 2) + "%" : "--";
@@ -683,7 +694,7 @@ void handleRoot() {
       double v = (double)dPrice * localHoldings[i];
       double d = ((double)dPrice - (double)dOpen) * localHoldings[i];
       totalVal += v; totalPL += d;
-      valStr = cSym + String(v, 2);
+      valStr = String(v, 2);
       plStr  = (d >= 0 ? "+" : "") + String(d, 2);
     }
     
@@ -698,10 +709,10 @@ void handleRoot() {
 
     rows += "<tr>"
           + String("<td>") + symLink + statusInfo + "</td>"
-          + "<td style='font-weight:700'>" + price + "</td>"
-          + "<td style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
-          + "<td>" + valStr + "</td>"
-          + "<td style='color:" + clr + "'>" + plStr + "</td>"
+          + "<td class='tnowrap' style='font-weight:700'>" + price + "</td>"
+          + "<td class='chg' style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
+          + "<td class='col-v tnowrap'>" + valStr + "</td>"
+          + "<td class='col-pl tnowrap' style='color:" + clr + "'>" + plStr + "</td>"
           + "</tr>";
   }
 
@@ -872,6 +883,7 @@ void setup() {
   delay(2000);
 
   server.on("/",           HTTP_GET,  handleRoot);
+  server.on("/favicon.svg",HTTP_GET,  handleFavicon);
   server.on("/save",       HTTP_POST, handleSave);
   server.on("/refresh",    HTTP_GET,  handleForceRefresh);
   server.on("/api/quotes", HTTP_GET,  handleApiQuotes);
