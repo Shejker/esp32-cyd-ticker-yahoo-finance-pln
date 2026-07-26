@@ -20,10 +20,12 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 | **Data source** | CoinGecko + Finnhub (API keys required) | Yahoo Finance (no API keys) |
 | **Currency** | USD | Automatic conversion to PLN |
 | **Tickers** | Up to 5 crypto + 10 stocks | Up to 8, any mix |
-| **Portfolio** | — | Holdings, day P&L, auto-sort by value |
+| **Portfolio** | — | Holdings, P&L, auto-sort by value |
+| **Chart period** | — | 1D / 5D / 1M / 3M / 6M / YTD / 1Y / 3Y / MAX |
 | **Market status** | — | Open/closed detection + countdown timer |
-| **Touch** | — | Tap ticker → detail view |
+| **Touch** | — | Tap ticker → detail view with sparkline |
 | **Theme** | — | Dark / light mode |
+| **Night mode** | — | Auto-dim display on schedule |
 | **API** | — | JSON endpoint at `/api/quotes` |
 | **Architecture** | Single-threaded | FreeRTOS tasks + mutex |
 
@@ -33,12 +35,14 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 
 - Live prices for stocks, ETFs, crypto, commodities, and forex via Yahoo Finance
 - Automatic currency conversion to PLN for all assets
-- Touch any ticker to open a detail view with sparkline
-- Portfolio mode — track holdings value, day P&L, and sort by PLN value
+- Configurable chart period — P&L and % change calculated from the selected timeframe (1D through MAX)
+- Touch any ticker to open a detail view with sparkline chart; sparkline covers the full selected period
+- Portfolio mode — track holdings value, P&L, and sort by PLN value
 - Price alerts with RGB LED flash (based on converted PLN price)
-- Market open/closed status with countdown timers (e.g. `1d 13h 30m`)
+- Market open/closed status with countdown timers (e.g. `opens in 1d 4h`)
+- Night mode — automatically dims the display to brightness 25 on a configurable schedule
 - Dark and light mode
-- Full web UI — change tickers, refresh rate, brightness, holdings, and alerts from any browser
+- Full web UI — configure everything from any browser, mobile-friendly
 - JSON API at `/api/quotes` for home automation
 - WiFiManager captive portal — no hardcoded credentials
 
@@ -58,7 +62,7 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 ## Quick Start
 
 1. Flash the firmware via Arduino IDE
-2. Connect to the `StockTicker-Setup` WiFi access point and enter your WiFi credentials
+2. Connect to the `PortfolioTracker-Setup` WiFi access point and enter your WiFi credentials
 3. Open the IP address shown on the display in your browser and configure tickers
 
 > After connecting to WiFi, the device is also reachable at **http://portfolio-tracker.local** (works on macOS, iOS, Windows 10/11).
@@ -67,7 +71,7 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 
 Open the displayed IP in your browser. All values are shown and configured in PLN.
 
-**Live Prices table** — price, % change, portfolio value, day P&L per ticker  
+**Live Prices table** — price, % change, portfolio value, and P&L per ticker for the selected period. Each symbol links to its Yahoo Finance page.  
 **Force Refresh** — manually trigger a data fetch  
 **JSON API** — `/api/quotes` raw data for automation
 
@@ -75,12 +79,35 @@ Open the displayed IP in your browser. All values are shown and configured in PL
 
 | Setting | Description |
 |---|---|
-| Tickers | Comma-separated Yahoo Finance symbols, up to 8 |
+| Tickers | Add/remove individual ticker fields dynamically, up to 8 |
+| Chart Period | 1D / 5D / 1M / 3M / 6M / YTD / 1Y / 3Y / MAX — changes P&L baseline, % change, and sparkline |
 | Refresh interval | Fetch frequency in seconds (min 10s) |
 | Backlight | Brightness 10–255 |
 | Dark mode | Toggle dark/light theme |
-| Portfolio mode | Enable holdings tracking, day P&L, and sort by value |
+| Portfolio mode | Enable holdings tracking, P&L, and sort by value |
+| Night mode | Auto-dim to brightness 25 between configurable hours (e.g. 00:00 → 08:00, midnight wrap supported) |
 | Holdings & Alerts | Shares/units and alert thresholds per ticker (PLN) |
+
+## Chart Periods
+
+| Period | P&L baseline | Sparkline interval |
+|---|---|---|
+| 1D | Previous close (Yahoo `chartPreviousClose`) | 15 min |
+| 5D | First data point in series | 30 min |
+| 1M / 3M / 6M / YTD | First data point in series | 1 day |
+| 1Y / 3Y | First data point in series | 1 week |
+| MAX | First data point in series | 1 month |
+
+Sparklines are subsampled to fit the display regardless of period length.
+
+## Price Alerts
+
+Set alert thresholds (PLN) per ticker in the Holdings & Alerts section. When a price crosses a threshold, the RGB LED flashes yellow three times. The alert dot is visible on each grid cell:
+
+- **Filled yellow dot** — alert currently triggered
+- **Outlined yellow dot** — alert set but not yet triggered
+
+All thresholds are evaluated in PLN after currency conversion.
 
 ## Ticker Symbols
 
@@ -98,8 +125,9 @@ Standard Yahoo Finance format:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `nativePrice`, `nativeCurrency`, `isClosed` |
+| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `range`, `nativePrice`, `nativeCurrency`, `valid`, `isClosed` |
 | `/refresh` | GET | Triggers an immediate data fetch |
+| `/favicon.svg` | GET | Device favicon |
 
 ## Dependencies
 
