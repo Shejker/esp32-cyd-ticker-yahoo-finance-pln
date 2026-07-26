@@ -27,7 +27,8 @@ String buildRootHtml(
   bool dark, bool portfolio,
   const String& rows, const String& holdRows, const String& tickerList,
   double totalVal, double totalPL, bool anyMissing,
-  int refreshSec, int brightness, int minRefresh, int defaultRefresh)
+  int refreshSec, int brightness, int minRefresh, int defaultRefresh,
+  bool nightMode, int nightFrom, int nightTo)
 {
   const char* bg    = dark ? "#0a0a0f" : "#f0f0f5";
   const char* card  = dark ? "#13131a" : "#ffffff";
@@ -39,6 +40,7 @@ String buildRootHtml(
   const char* hint  = dark ? "#444"    : "#999";
   String dmChk = dark      ? " checked" : "";
   String pmChk = portfolio  ? " checked" : "";
+  String nmChk = nightMode  ? " checked" : "";
 
   return String(
     "<!DOCTYPE html><html><head>"
@@ -67,6 +69,8 @@ String buildRootHtml(
     + ".meta strong{color:" + text + "}"
     + ".meta .pl-positive{color:#00cc44;font-weight:bold}"
     + ".meta .pl-negative{color:#ff4444;font-weight:bold}"
+    + ".night-range{display:flex;gap:12px;margin-top:8px}"
+    + ".night-range>div{flex:1}"
     + "a{color:#0af;text-decoration:none}"
     + "</style></head><body>"
     + "<h1>ESP32 \xc2\xb7 CYD</h1><h2>Portfolio Tracker</h2>"
@@ -109,6 +113,17 @@ String buildRootHtml(
     + "<input type='checkbox' name='portfolio' id='pm' value='1'" + pmChk + ">"
     + "<label for='pm'>Portfolio Mode (Value &amp; P&amp;L &amp; Sort)</label>"
     + "</div>"
+    + "<div class='row'>"
+    + "<input type='checkbox' name='nighten' id='nm' value='1'" + nmChk + ">"
+    + "<label for='nm'>Night Mode</label>"
+    + "</div>"
+    + "<div class='night-range'>"
+    + "<div><label>From (hour 0-23)</label>"
+    + "<input type='number' name='nightfr' min='0' max='23' value='" + nightFrom + "'></div>"
+    + "<div><label>To (hour 0-23)</label>"
+    + "<input type='number' name='nightto' min='0' max='23' value='" + nightTo + "'></div>"
+    + "</div>"
+    + "<div class='hint'>Midnight wrap supported &mdash; e.g. 00:00 &rarr; 08:00</div>"
     + "</div>"
 
     + "<div class='card'><h3>Holdings &amp; Alerts (PLN)</h3>"

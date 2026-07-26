@@ -75,6 +75,11 @@ int  brightness    = 200;
 bool darkMode      = true;
 bool portfolioMode = false;
 
+// --- NIGHT MODE ---
+bool nightModeEnabled = false;
+int  nightFrom        = 0;
+int  nightTo          = 8;
+
 enum ViewMode { VIEW_GRID, VIEW_DETAIL };
 ViewMode viewMode  = VIEW_GRID;
 int      detailIdx = 0;
@@ -147,11 +152,14 @@ String formatPrice(float price, const String &currency) {
 // ==========================================
 void loadPrefs() {
   prefs.begin("ticker", true);
-  refreshSec    = prefs.getInt("refresh",    DEFAULT_REFRESH);
-  brightness    = prefs.getInt("bright",     200);
-  darkMode      = prefs.getBool("dark",      true);
-  portfolioMode = prefs.getBool("portfolio", false);
-  tickerCount   = prefs.getInt("tcount",     0);
+  refreshSec        = prefs.getInt("refresh",    DEFAULT_REFRESH);
+  brightness        = prefs.getInt("bright",     200);
+  darkMode          = prefs.getBool("dark",      true);
+  portfolioMode     = prefs.getBool("portfolio", false);
+  nightModeEnabled  = prefs.getBool("nighten",   false);
+  nightFrom         = prefs.getInt("nightfr",    0);
+  nightTo           = prefs.getInt("nightto",    8);
+  tickerCount       = prefs.getInt("tcount",     0);
   if (tickerCount < 0 || tickerCount > MAX_TICKERS) tickerCount = 0;
 
   for (int i = 0; i < tickerCount; i++) {
@@ -166,7 +174,6 @@ void loadPrefs() {
   }
   prefs.end();
 
-  // Defaults for first boot
   if (tickerCount == 0) {
     const char* def[] = { "ANAV.DE", "WEBN.DE", "BTC-USD", "GC=F" };
     for (int i = 0; i < 4; i++) {
@@ -185,6 +192,9 @@ void savePrefs() {
   prefs.putInt("bright",     brightness);
   prefs.putBool("dark",      darkMode);
   prefs.putBool("portfolio", portfolioMode);
+  prefs.putBool("nighten",   nightModeEnabled);
+  prefs.putInt("nightfr",    nightFrom);
+  prefs.putInt("nightto",    nightTo);
   prefs.putInt("tcount",     tickerCount);
   
   for (int i = 0; i < tickerCount; i++) {
@@ -200,7 +210,6 @@ void savePrefs() {
 // MARKET & NETWORK LOGIC
 // ==========================================
 void updateMarketStatus(Quote &q) {
-  // Crypto always open
   if (q.sym.indexOf("BTC") != -1 || q.sym.indexOf("ETH") != -1 || q.sym.indexOf("-USD") != -1) {
     q.isClosed = false; q.timeRemaining = 0; return;
   }
@@ -216,15 +225,15 @@ void updateMarketStatus(Quote &q) {
   q.isClosed = false;
   int daysToOpen = 0;
 
-  if (wday == 0) { // Sunday
+  if (wday == 0) {
     q.isClosed = true; daysToOpen = 1;
-  } else if (wday == 6) { // Saturday
+  } else if (wday == 6) {
     q.isClosed = true; daysToOpen = 2;
-  } else if (mins < openTime) { // Before open
+  } else if (mins < openTime) {
     q.isClosed = true; daysToOpen = 0;
-  } else if (mins > closeTime) { // After close
-    q.isClosed = true; 
-    daysToOpen = (wday == 5) ? 3 : 1; // Friday jumps to Monday
+  } else if (mins > closeTime) {
+    q.isClosed = true;
+    daysToOpen = (wday == 5) ? 3 : 1;
   }
 
   if (q.isClosed) {
@@ -402,7 +411,6 @@ void drawHeader() {
   tft.setTextDatum(ML_DATUM);
   tft.drawString("CYD PORTFOLIO", 8, HEADER_H / 2, 2);
 
-  // WiFi Indicator
   if (WiFi.status() == WL_CONNECTED) {
     int bars = (WiFi.RSSI() > -50) ? 4 : (WiFi.RSSI() > -65) ? 3 : (WiFi.RSSI() > -80) ? 2 : 1;
     for (int b = 0; b < 4; b++) {
@@ -410,7 +418,6 @@ void drawHeader() {
     }
   }
 
-  // Last Update Time
   if (lastFetchTime > 0) {
     char buf[16]; struct tm tm; localtime_r(&lastFetchTime, &tm);
     strftime(buf, sizeof(buf), "%H:%M", &tm);
@@ -419,7 +426,6 @@ void drawHeader() {
     tft.drawString(buf, 170, HEADER_H / 2, 2);
   }
 
-  // Spinner
   const int cx = 308, cy = HEADER_H / 2;
   if (fetching) {
     const int8_t dx[] = { 0, 5, 0, -5 }, dy[] = { -5, 0, 5, 0 };
@@ -606,7 +612,6 @@ String formatCountdown(long seconds) {
 void handleRoot() {
   xSemaphoreTake(dataMutex, portMAX_DELAY);
 
-  // Local copy to avoid index mixing while mutex is held
   String localTickers[MAX_TICKERS];
   float localHoldings[MAX_TICKERS];
   float localAlertHigh[MAX_TICKERS];
@@ -654,7 +659,8 @@ void handleRoot() {
   bool anyMissing = false;
 
   for (int i = 0; i < localTickerCount; i++) {
-    String sym = localQuotes[i].sym;
+    String rawSym = localQuotes[i].sym;
+    String symLink = "<a href='https://finance.yahoo.com/quote/" + rawSym + "/' target='_blank'>" + rawSym + "</a>";
     
     float rate = getRateToPLN(localQuotes[i].currency);
     bool conv = (rate > 0 && localQuotes[i].currency != "PLN");
@@ -691,7 +697,7 @@ void handleRoot() {
     }
 
     rows += "<tr>"
-          + String("<td>") + sym + statusInfo + "</td>"
+          + String("<td>") + symLink + statusInfo + "</td>"
           + "<td style='font-weight:700'>" + price + "</td>"
           + "<td style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
           + "<td>" + valStr + "</td>"
@@ -716,7 +722,8 @@ void handleRoot() {
     buildRootHtml(darkMode, portfolioMode,
                   rows, holdRows, tickerList,
                   totalVal, totalPL, anyMissing,
-                  refreshSec, brightness, MIN_REFRESH, DEFAULT_REFRESH));
+                  refreshSec, brightness, MIN_REFRESH, DEFAULT_REFRESH,
+                  nightModeEnabled, nightFrom, nightTo));
 }
 
 void handleSave() {
@@ -766,6 +773,10 @@ void handleSave() {
 
   darkMode      = server.hasArg("darkmode");
   portfolioMode = server.hasArg("portfolio");
+
+  nightModeEnabled = server.hasArg("nighten");
+  if (server.hasArg("nightfr")) { int v = server.arg("nightfr").toInt(); if (v >= 0 && v <= 23) nightFrom = v; }
+  if (server.hasArg("nightto")) { int v = server.arg("nightto").toInt(); if (v >= 0 && v <= 23) nightTo   = v; }
 
   savePrefs();
   fetchPending = true;
@@ -819,7 +830,6 @@ void setup() {
   loadPrefs(); applyBrightness(brightness);
   dataMutex = xSemaphoreCreateMutex();
 
-  // --- WiFi start ---
   tft.fillScreen(C_BG());
   tft.setTextColor(TFT_CYAN, C_BG());
   tft.setTextDatum(MC_DATUM);
@@ -861,7 +871,6 @@ void setup() {
   tft.drawString("http://portfolio-tracker.local/", 160, 130, 2);
   delay(2000);
 
-  // --- Web server ---
   server.on("/",           HTTP_GET,  handleRoot);
   server.on("/save",       HTTP_POST, handleSave);
   server.on("/refresh",    HTTP_GET,  handleForceRefresh);
@@ -892,10 +901,27 @@ void loop() {
     lastTick = millis();
     if (fetching || lastFetching) {
       xSemaphoreTake(dataMutex, portMAX_DELAY);
-      drawHeader(); 
+      drawHeader();
       xSemaphoreGive(dataMutex);
     }
     if (lastFetching && !fetching) drawAll();
     lastFetching = fetching;
+  }
+
+  // Night mode auto-brightness
+  {
+    static int lastNightBright = -1;
+    int target = brightness;
+    if (nightModeEnabled) {
+      struct tm tmn;
+      if (getLocalTime(&tmn)) {
+        int h = tmn.tm_hour;
+        bool inNight = (nightFrom < nightTo)
+          ? (h >= nightFrom && h < nightTo)
+          : (h >= nightFrom || h < nightTo);
+        if (inNight) target = 25;
+      }
+    }
+    if (target != lastNightBright) { applyBrightness(target); lastNightBright = target; }
   }
 }
