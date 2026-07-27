@@ -49,8 +49,6 @@ struct Quote {
   String currency;
   bool   valid;
   int    errors;
-  bool   isClosed;
-  long   timeRemaining; // minutes until open (only relevant for 1d range)
   float  sparkline[MAX_SPARK_POINTS];
   int    sparkCount;
 };
@@ -243,42 +241,6 @@ void savePrefs() {
 // ==========================================
 // MARKET & NETWORK
 // ==========================================
-void updateMarketStatus(Quote &q) {
-
-  if (q.sym.indexOf("BTC") != -1 || q.sym.indexOf("ETH") != -1 || q.sym.indexOf("-USD") != -1) {
-    q.isClosed = false; q.timeRemaining = 0; return;
-  }
-
-  struct tm tm;
-  if (!getLocalTime(&tm)) return;
-  int wday = tm.tm_wday, mins = tm.tm_hour * 60 + tm.tm_min;
-
-  bool euMarket = (q.sym.endsWith(".DE") || q.sym.endsWith(".PA") ||
-                   q.sym.endsWith(".L")  || q.sym.endsWith(".WA"));
-  int openTime  = euMarket ? (9 * 60)      : (15 * 60 + 30);
-  int closeTime = euMarket ? (17 * 60 + 30) : (22 * 60);
-
-  q.isClosed = false;
-  int daysToOpen = 0;
-
-  if (wday == 0) {
-    q.isClosed = true; daysToOpen = 1;
-  } else if (wday == 6) {
-    q.isClosed = true; daysToOpen = 2;
-  } else if (mins < openTime) {
-    q.isClosed = true; daysToOpen = 0;
-  } else if (mins > closeTime) {
-    q.isClosed = true;
-    daysToOpen = (wday == 5) ? 3 : 1;
-  }
-
-  if (q.isClosed) {
-    q.timeRemaining = (daysToOpen * 24 * 60) - mins + openTime;
-  } else {
-    q.timeRemaining = 0;
-  }
-}
-
 void fetchYahoo(int idx) {
   String interval = intervalFor();
   HTTPClient http;
@@ -337,7 +299,6 @@ void fetchYahoo(int idx) {
           q.pct      = (prev > 0) ? ((price - prev) / prev * 100.0f) : 0.0f;
           q.currency = String((const char*)(meta["currency"] | "USD"));
           q.currency.toUpperCase();
-          updateMarketStatus(q);
           q.valid  = true;
           q.errors = 0;
         } else q.errors++;
@@ -541,42 +502,30 @@ void drawQuoteGrid(int idx, Quote &q) {
   float r   = getRateToPLN(q.currency); bool cv = (r > 0 && q.currency != "PLN");
   float dP  = cv ? q.price * r : q.price;
   float dO  = cv ? q.open  * r : q.open;
-  uint16_t cPct = q.isClosed ? C_MUTED()
-                              : (q.pct > 0.05f ? C_UP() : q.pct < -0.05f ? C_DOWN() : C_FLAT());
+  uint16_t cPct = q.pct > 0.05f ? C_UP() : q.pct < -0.05f ? C_DOWN() : C_FLAT();
   int lineY = (portfolioMode && holdings[idx] > 0) ? y + cellH / 3 - 2 : y + cellH / 2;
 
-  tft.setTextDatum(ML_DATUM); tft.setTextColor(q.isClosed ? C_MUTED() : C_LABEL(), C_PANEL());
+  tft.setTextDatum(ML_DATUM); tft.setTextColor(C_LABEL(), C_PANEL());
   tft.drawString(displaySym(q.sym), x + 6, lineY, 2);
 
   tft.setTextDatum(MR_DATUM); tft.setTextColor(cPct, C_PANEL());
   tft.drawString((q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%", x + cellW - 6, lineY, 2);
 
-  tft.setTextDatum(MC_DATUM); tft.setTextColor(q.isClosed ? C_MUTED() : C_TEXT(), C_PANEL());
+  tft.setTextDatum(MC_DATUM); tft.setTextColor(C_TEXT(), C_PANEL());
   tft.drawString(formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency)),
                  x + cellW / 2, lineY, 2);
 
   if (portfolioMode && holdings[idx] > 0 && cellH >= 40) {
     double pl = ((double)dP - (double)dO) * holdings[idx];
-    tft.setTextColor(q.isClosed ? C_MUTED() : (pl >= 0 ? C_UP() : C_DOWN()), C_PANEL());
+    tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
     tft.drawString("V:" + String(dP * holdings[idx], 0)
                    + " P&L " + rangeLabel() + ":" + (pl >= 0 ? "+" : "") + String(pl, 0),
                    x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
-  } else if (q.isClosed && cellH >= 40) {
-    tft.setTextColor(C_MUTED(), C_PANEL());
-    tft.drawString("CLOSED", x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
   }
 
   bool br = (alertHigh[idx] > 0 && dP >= alertHigh[idx]) || (alertLow[idx] > 0 && dP <= alertLow[idx]);
   if (br)                                                 tft.fillCircle(x + cellW - 5, y + 5, 3, C_ALERT());
   else if (alertHigh[idx] > 0 || alertLow[idx] > 0)      tft.drawCircle(x + cellW - 5, y + 5, 3, C_ALERT());
-}
-
-String formatCountdown(long seconds) {
-  if (seconds <= 0) return "soon";
-  long hours = seconds / 3600, mins = (seconds % 3600) / 60;
-  if (hours > 24) return "in " + String(hours / 24) + "d " + String(hours % 24) + "h";
-  if (hours > 0)  return "in " + String(hours) + "h " + String(mins) + "m";
-  return "in " + String(mins) + "m";
 }
 
 void drawDetailView(int idx) {
@@ -587,11 +536,10 @@ void drawDetailView(int idx) {
   tft.setTextColor(C_LABEL());
   tft.drawString(q.sym, 160, HEADER_H + 15, 2);
 
-  tft.setTextColor(q.isClosed ? C_MUTED() : C_TEXT());
+  tft.setTextColor(C_TEXT());
   tft.drawString(formatPrice(q.price, getCurrencySymbol(q.currency)), 160, HEADER_H + 40, 4);
 
-  uint16_t cPct = q.isClosed ? C_MUTED()
-                              : (q.pct > 0 ? C_UP() : (q.pct < 0 ? C_DOWN() : C_FLAT()));
+  uint16_t cPct = q.pct > 0 ? C_UP() : (q.pct < 0 ? C_DOWN() : C_FLAT());
   tft.setTextColor(cPct);
   tft.drawString((q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "% (" + rangeLabel() + ")",
                  160, HEADER_H + 65, 2);
@@ -622,11 +570,6 @@ void drawDetailView(int idx) {
   } else {
     tft.setTextColor(C_MUTED());
     tft.drawString("No chart data", 160, HEADER_H + 110, 2);
-  }
-
-  if (q.isClosed) {
-    tft.setTextColor(C_MUTED());
-    tft.drawString("Opens " + formatCountdown(q.timeRemaining * 60L), 160, HEADER_H + 165, 2);
   }
 
   tft.setTextDatum(MR_DATUM); tft.setTextColor(C_MUTED());
@@ -768,16 +711,8 @@ void handleRoot() {
       plStr  = (d >= 0 ? "+" : "") + String(d, 2);
     }
 
-    String statusInfo = "";
-    if (localQuotes[i].isClosed) {
-      statusInfo = " <span style='font-size:10px;color:#888'>(Closed";
-      if (localQuotes[i].timeRemaining > 0)
-        statusInfo += " - opens " + formatCountdown(localQuotes[i].timeRemaining * 60);
-      statusInfo += ")</span>";
-    }
-
     rows += "<tr>"
-          + String("<td>") + symLink + statusInfo + "</td>"
+          + String("<td>") + symLink + "</td>"
           + "<td class='tnowrap' style='font-weight:700'>" + price + "</td>"
           + "<td class='chg' style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
           + "<td class='tnowrap'>" + valStr + "</td>"
@@ -825,8 +760,6 @@ void handleSave() {
           quotes[tickerCount]           = Quote{};
           quotes[tickerCount].sym       = t;
           quotes[tickerCount].currency  = "USD";
-          quotes[tickerCount].isClosed  = false;
-          quotes[tickerCount].timeRemaining = 0;
           tickerCount++;
         }
         start = i + 1;
@@ -885,8 +818,7 @@ void handleApiQuotes() {
           + "\"range\":\""          + chartRange                 + "\","
           + "\"nativePrice\":"      + String(quotes[i].price, 4) + ","
           + "\"nativeCurrency\":\"" + quotes[i].currency         + "\","
-          + "\"valid\":"            + (quotes[i].valid    ? "true" : "false") + ","
-          + "\"isClosed\":"         + (quotes[i].isClosed ? "true" : "false") + "}";
+          + "\"valid\":"            + (quotes[i].valid ? "true" : "false") + "}";
   }
   xSemaphoreGive(dataMutex);
   json += "]";

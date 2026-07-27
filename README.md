@@ -22,7 +22,6 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 | **Tickers** | Up to 5 crypto + 10 stocks | Up to 8, any mix |
 | **Portfolio** | — | Holdings, P&L, auto-sort by value |
 | **Chart period** | — | 1D / 5D / 1M / 3M / 6M / YTD / 1Y / 3Y / MAX |
-| **Market status** | — | Open/closed detection + countdown timer |
 | **Touch** | — | Tap ticker → detail view with sparkline |
 | **Theme** | — | Dark / light mode |
 | **Night mode** | — | Auto-dim display on schedule |
@@ -39,7 +38,6 @@ Displays prices and portfolio value on the built-in 2.8" touchscreen. Fully conf
 - Touch any ticker to open a detail view with sparkline chart; sparkline covers the full selected period
 - Portfolio mode — track holdings value, P&L, and sort by PLN value
 - Price alerts with RGB LED flash (based on converted PLN price)
-- Market open/closed status with countdown timers (e.g. `opens in 1d 4h`)
 - Night mode — automatically dims the display to brightness 25 on a configurable schedule
 - Dark and light mode
 - Full web UI — configure everything from any browser, mobile-friendly
@@ -125,7 +123,7 @@ Standard Yahoo Finance format:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `range`, `nativePrice`, `nativeCurrency`, `valid`, `isClosed` |
+| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `range`, `nativePrice`, `nativeCurrency`, `valid` |
 | `/refresh` | GET | Triggers an immediate data fetch |
 | `/favicon.svg` | GET | Device favicon |
 
