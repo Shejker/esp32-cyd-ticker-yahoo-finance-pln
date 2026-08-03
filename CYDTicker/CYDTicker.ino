@@ -763,7 +763,7 @@ void drawPortfolioFooter() {
   }
 
   tft.setTextColor((pl >= 0) ? C_UP() : C_DOWN(), C_HEADER());
-  tft.drawString("PLN: " + String(total, 2) + " P&L(" + rangeLabel() + "): " + (pl >= 0 ? "+" : "") + String(pl, 2),
+  tft.drawString("PLN:" + String(total, 2) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String(pl, 2),
     160, 240 - FOOTER_H / 2, 1);
 }
 
