@@ -142,10 +142,7 @@ void applyBrightness(int val) {
 }
 
 String displaySym(const String &sym) {
-  if (sym == "BTC-USD") return "BTC";
-  if (sym == "GC=F" || sym == "XAUUSD=X") return "XAU";
-  int dot = sym.indexOf('.');
-  return (dot != -1) ? sym.substring(0, dot) : sym;
+  return sym;
 }
 
 String getCurrencySymbol(const String &curr) {
@@ -408,7 +405,7 @@ void loadPrefs() {
   prefs.end();
 
   if (tickerCount == 0) {
-    const char* def[] = { "ANAV.DE", "WEBN.DE", "BTC-USD", "GC=F" };
+    const char* def[] = { "AAPL", "MSFT", "BTC-USD", "GC=F" };
     for (int i = 0; i < 4; i++) {
       tickers[i] = def[i];
       holdings[i] = alertHigh[i] = alertLow[i] = 0;
@@ -798,7 +795,7 @@ void drawQuoteGrid(int idx, Quote &q) {
     double v, pl;
     if (computePeriodPL(idx, v, pl)) {
       tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
-      tft.drawString("V:" + String(v, 0) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String(pl, 0),
+      tft.drawString("V:" + String((long)round(v)) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String((long)round(pl)),
         x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
     }
   }
