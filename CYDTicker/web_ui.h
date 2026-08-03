@@ -23,6 +23,7 @@ String buildRootHtml(
   const String& rows, const String& holdRows, const String& txRows, const String& tickerOptions,
   const String& tickerList,
   double totalVal, double totalPL, bool anyMissing,
+  double totalRealPL, bool anyRealPl,
   int refreshSec, int brightness, int minRefresh, int defaultRefresh,
   bool nightMode, int nightFrom, int nightTo,
   const String& chartRange, const String& rangeLabel)
@@ -86,6 +87,7 @@ String buildRootHtml(
   h += ".tnowrap{white-space:nowrap}";
   h += ".chg{font-size:10px;white-space:nowrap}";
   h += ".dellink{color:" + String(rmclr) + ";text-decoration:none;font-size:13px;padding:2px 6px}";
+  h += ".editlink{color:#0af;text-decoration:none;font-size:13px;padding:2px 6px}";
   h += ".meta{font-size:11px;color:" + String(muted) + ";margin-top:6px}";
   h += ".meta strong{color:" + String(text) + "}";
   h += ".pl-pos{color:#00cc44;font-weight:bold}.pl-neg{color:#ff4444;font-weight:bold}";
@@ -106,15 +108,16 @@ String buildRootHtml(
   h += "<div class='card'><h3>Live Prices</h3><div class='tbl-wrap'>";
   h += "<table><thead><tr>"
     "<th>Symbol</th><th>Price (PLN)</th><th>Change (" + rangeLabel + ")</th>"
-    "<th>Value (PLN)</th><th>P&amp;L (PLN)</th>"
+    "<th>Value (PLN)</th><th>P&amp;L (" + rangeLabel + ")</th>"
     "</tr></thead><tbody>" + rows + "</tbody></table></div>";
 
   if (portfolio && totalVal > 0) {
     h += "<div class='meta'>Portfolio (PLN): <strong>" + String(totalVal, 2) + "</strong>"
-      + " &nbsp; Total P&amp;L (PLN): "
+      + " &nbsp; P&amp;L (" + rangeLabel + "): "
       + "<span class='" + (totalPL >= 0 ? "pl-pos" : "pl-neg") + "'>"
       + (totalPL >= 0 ? "+" : "") + String(totalPL, 2) + "</span>";
     if (anyMissing) h += "<br><span style='color:#e6a23c'>* Missing rate.</span>";
+    h += "<br><span class='hint2'>Paper gain/loss from price movement over the selected period. For your real cost-basis P&amp;L (what you actually paid), see Holdings &amp; Alerts below.</span>";
     h += "</div>";
   }
   h += "<div class='meta'><a href='/refresh'>Force Refresh</a> &nbsp;|&nbsp; "
@@ -133,7 +136,7 @@ String buildRootHtml(
     "<input type='hidden' name='tickers' id='th'></div>";
 
   h += "<div class='card'><h3>Chart Period</h3>"
-    "<label>Period for % change and sparkline (does not affect P&amp;L &mdash; see below)</label>"
+    "<label>Period for % change, sparkline, and the Live Prices P&amp;L column (real cost-basis P&amp;L in Holdings &amp; Alerts is unaffected)</label>"
     "<div class='rg' id='rg'></div>"
     "<input type='hidden' name='range' id='ri' value='" + chartRange + "'>"
     "<div class='hint'>Save &amp; Apply to reload data.</div></div>";
@@ -161,31 +164,48 @@ String buildRootHtml(
   // Transactions card -- separate form, posts to /addlot (kept outside the
   // settings form since HTML forms cannot be nested).
   h += "<div class='card'><h3>Transactions (cost basis)</h3><div class='tbl-wrap'>"
-    "<table><thead><tr><th>Symbol</th><th>Date</th><th>Qty</th><th>Price PLN/unit</th><th></th></tr></thead>"
+    "<table><thead><tr><th>Symbol</th><th>Date</th><th>Qty</th><th>Price PLN/unit</th><th>Total PLN</th><th></th></tr></thead>"
     "<tbody>" + txRows + "</tbody></table></div>";
-  h += "<form method='POST' action='/addlot' class='txform'>"
+  h += "<form method='POST' action='/addlot' class='txform' id='txform'>"
     "<select class='inp' name='lt' id='txSym'>" + tickerOptions + "</select>"
     "<input class='inp' type='date' name='ld' id='txDate' required>"
-    "<input class='inp' type='number' name='lq' step='any' placeholder='+1.5 buy / -0.5 sell' required>"
+    "<input class='inp' type='number' name='lq' id='txQty' step='any' placeholder='+1.5 buy / -0.5 sell' required>"
     "<div class='pricerow'>"
     "<input class='inp' type='number' name='lp' id='txPrice' step='any' min='0' placeholder='price PLN/unit' required>"
     "<button type='button' class='fetchbtn' onclick='fetchHistPrice()'>&#8635; Fetch</button>"
     "</div>"
+    "<input type='hidden' name='lk' id='txLotIdx' value=''>"
     "<span class='hint2' id='fetchStatus'></span>"
-    "<button type='submit' style='margin-top:0'>+ Add Transaction</button>"
+    "<div class='row' style='width:100%;gap:8px;margin-top:0'>"
+    "<button type='submit' id='txSubmitBtn' style='margin-top:0;flex:1'>+ Add Transaction</button>"
+    "<button type='button' id='txCancelBtn' class='fetchbtn' style='display:none' onclick='cancelEdit()'>Cancel</button>"
+    "</div>"
     "</form>";
   h += "<div class='hint'>Positive qty = buy, negative = sell. Pick any date, including past purchases you still need to backfill. "
-    "P&amp;L is computed with the average-cost method from your real PLN purchase prices &mdash; it no longer depends on the chart period above. "
-    "The Fetch button looks up that date's closing price and same-day exchange rate; double-check it against your broker statement before saving.</div></div>";
+    "Your real cost-basis P&amp;L (average-cost method, from these prices) is shown in Holdings &amp; Alerts below, independent of the chart period. "
+    "The Fetch button looks up that date's closing price and same-day exchange rate; double-check it against your broker statement before saving. "
+    "Use &#9998; on a row to edit it (fills this form in edit mode) or &#10005; to delete it.</div>"
+    "<div class='hint'><a href='/api/transactions' target='_blank'>Transactions JSON (backup)</a> &mdash; always reflects what's currently saved. "
+    "Save this externally so a device reflash/erase doesn't lose your history.</div></div>";
 
   // Holdings & Alerts -- qty/avg cost are read-only, derived from the
   // transactions above. Its inputs carry form='cfgform' (set in the .ino
   // row builder) so they still submit with the settings form above, even
   // though this card sits outside that <form> tag.
   h += "<div class='card'><h3>Holdings &amp; Alerts</h3><div class='tbl-wrap'>"
-    "<table><thead><tr><th>Symbol</th><th>Qty (calc.)</th><th>Avg Cost (PLN)</th><th>Alert High</th><th>Alert Low</th></tr></thead>"
-    "<tbody>" + holdRows + "</tbody></table></div>"
-    "<div class='hint'>Alert threshold in PLN, 0 = disabled. Qty &amp; avg cost are calculated from your Transactions above, not editable here.</div></div>";
+    "<table><thead><tr><th>Symbol</th><th>Qty (calc.)</th><th>Avg Cost (PLN)</th><th>P&amp;L (PLN)</th><th>Alert High</th><th>Alert Low</th></tr></thead>"
+    "<tbody>" + holdRows + "</tbody></table></div>";
+  if (anyRealPl) {
+    h += "<div class='meta'>Total P&amp;L (all holdings): ";
+    h += "<span class='";
+    h += (totalRealPL >= 0 ? "pl-pos" : "pl-neg");
+    h += "'>";
+    h += (totalRealPL >= 0 ? "+" : "");
+    h += String(totalRealPL, 2);
+    h += " PLN</span></div>";
+  }
+  h += "<div class='hint'>Alert threshold in PLN, 0 = disabled. Qty, avg cost &amp; P&amp;L are calculated from your Transactions above, not editable here. "
+    "P&amp;L here is real cost-basis (what you actually paid vs current value) and does not change with Chart Period.</div></div>";
 
   h += "<button type='submit' form='cfgform'>&#9654; Save &amp; Apply</button>";
 
@@ -237,13 +257,33 @@ String buildRootHtml(
     "var statusEl=document.getElementById('fetchStatus');"
     "if(!date){statusEl.textContent='Pick a date first.';return;}"
     "statusEl.textContent='Fetching...';"
-    "fetch('/api/histprice?lt='+sym+'&ld='+date)"
+    "fetch('/api/histprice?lt='+encodeURIComponent(sym)+'&ld='+encodeURIComponent(date))"
     ".then(function(r){return r.json();})"
     ".then(function(d){"
     "if(d.ok){priceEl.value=d.pricePLN.toFixed(2);statusEl.textContent='Loaded closing price for that date. Double-check before saving.';}"
     "else{statusEl.textContent='No data for that date -- enter the price manually.';}"
     "})"
     ".catch(function(){statusEl.textContent='Fetch failed -- enter the price manually.';});"
+    "}";
+
+  h += "function editLot(sym,date,qty,price,idx){"
+    "document.getElementById('txSym').value=sym;"
+    "document.getElementById('txDate').value=date;"
+    "document.getElementById('txQty').value=qty;"
+    "document.getElementById('txPrice').value=price;"
+    "document.getElementById('txLotIdx').value=idx;"
+    "document.getElementById('txform').action='/editlot';"
+    "document.getElementById('txSubmitBtn').textContent='\\u2713 Update Transaction';"
+    "document.getElementById('txCancelBtn').style.display='inline-block';"
+    "document.getElementById('fetchStatus').textContent='Editing existing transaction -- change values and Update, or Cancel.';"
+    "document.getElementById('txform').scrollIntoView({behavior:'smooth',block:'center'});"
+    "}";
+  h += "function cancelEdit(){"
+    "var f=document.getElementById('txform');"
+    "f.reset();f.action='/addlot';"
+    "document.getElementById('txSubmitBtn').textContent='+ Add Transaction';"
+    "document.getElementById('txCancelBtn').style.display='none';"
+    "document.getElementById('fetchStatus').textContent='';"
     "}";
 
   h += "</script>";

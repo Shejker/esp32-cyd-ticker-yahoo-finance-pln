@@ -47,7 +47,6 @@ struct Quote {
   String sym;
   float price;
   float pct;
-  float open;
   String currency;
   bool valid;
   int errors;
@@ -216,6 +215,38 @@ time_t parseDateYMD(const String &s) {
   return (t > 0) ? t : time(nullptr);
 }
 
+// Percent-encodes a string for safe use as a URL query value (tickers like
+// "GC=F" contain characters that are otherwise query-string delimiters).
+String urlEncode(const String &s) {
+  String out;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (isalnum((unsigned char)c) || c == '-' || c == '.' || c == '_' || c == '~') {
+      out += c;
+    } else {
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
+      out += buf;
+    }
+  }
+  return out;
+}
+
+// Resolves a ticker symbol to its CURRENT index in tickers[]. Always looked
+// up fresh at request time (never trust an index cached from a previous
+// page render) -- portfolioMode's background sort can reorder tickers[]
+// between page load and form submit, which would otherwise point actions
+// like Add Transaction / Fetch price / Delete at the wrong ticker.
+int findTickerIndex(const String &sym) {
+  xSemaphoreTake(dataMutex, portMAX_DELAY);
+  int found = -1;
+  for (int i = 0; i < tickerCount; i++) {
+    if (tickers[i] == sym) { found = i; break; }
+  }
+  xSemaphoreGive(dataMutex);
+  return found;
+}
+
 // ==========================================
 // TRANSACTIONS (COST BASIS)
 // ==========================================
@@ -290,9 +321,29 @@ bool computePLFor(const Quote &q, int origIdx, double &valueOut, double &costOut
   return true;
 }
 
-bool computePL(int i, double &v, double &c, double &p) {
+// Computes {value, period P&L}, both in PLN, for the CURRENTLY SELECTED
+// chart period (1D/5D/1M/.../MAX) -- i.e. "how much did this position's
+// value change over that period", derived from q.pct. This is a paper
+// gain/loss based on price movement, NOT the real cost-basis P&L above:
+// it ignores what you actually paid and just answers "what did the period
+// do to today's holdings". Used for the Live Prices table / device grid,
+// where the period selector should visibly affect the PLN figure too.
+bool computePeriodPLFor(const Quote &q, int origIdx, double &valueOut, double &periodPLOut) {
+  if (!q.valid || origIdx < 0 || origIdx >= MAX_TICKERS) return false;
+  float qty = holdings[origIdx];
+  if (qty <= 0.00001f) return false;
+  float rate = getRateToPLN(q.currency);
+  double pricePLN = (rate > 0) ? (double)q.price * rate : (double)q.price;
+  valueOut = pricePLN * qty;
+  double pctFrac = (double)q.pct / 100.0;
+  // valueOut = valueAtPeriodStart * (1 + pctFrac), so the change is:
+  periodPLOut = (pctFrac > -1.0) ? valueOut * pctFrac / (1.0 + pctFrac) : 0.0;
+  return true;
+}
+
+bool computePeriodPL(int i, double &v, double &p) {
   if (i < 0 || i >= MAX_TICKERS) return false;
-  return computePLFor(quotes[i], i, v, c, p);
+  return computePeriodPLFor(quotes[i], i, v, p);
 }
 
 // ==========================================
@@ -454,7 +505,6 @@ void fetchYahoo(int idx) {
             prev = firstClose;
           }
           q.price = price;
-          q.open = (prev > 0) ? prev : price;
           q.pct = (prev > 0) ? ((price - prev) / prev * 100.0f) : 0.0f;
           q.currency = String((const char*)(meta["currency"] | "USD"));
           q.currency.toUpperCase();
@@ -691,17 +741,29 @@ void drawHeader() {
 
 void drawPortfolioFooter() {
   if (!portfolioMode) return;
-  double total = 0, pl = 0; bool anyH = false;
+  double total = 0, pl = 0;
+  bool anyHeld = false, anyValid = false;
   for (int i = 0; i < tickerCount; i++) {
-    double v, c, p;
-    if (computePL(i, v, c, p)) { total += v; pl += p; anyH = true; }
+    if (holdings[i] > 0) anyHeld = true;
+    double v, p;
+    if (computePeriodPL(i, v, p)) { total += v; pl += p; anyValid = true; }
   }
-  if (!anyH) return;
+  if (!anyHeld) return; // nothing held at all -- nothing to show, ever
 
   tft.fillRect(0, 240 - FOOTER_H, 320, FOOTER_H, C_HEADER());
-  tft.setTextColor((pl >= 0) ? C_UP() : C_DOWN(), C_HEADER());
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("PLN " + String(total, 2) + " P&L" + (pl >= 0 ? " +" : " ") + String(pl, 2),
+
+  if (!anyValid) {
+    // Holdings exist but none have a valid quote yet -- e.g. right after
+    // Save & Apply resets all quotes, or a fetch error. Say so instead of
+    // leaving the previous cycle's total frozen on screen.
+    tft.setTextColor(C_MUTED(), C_HEADER());
+    tft.drawString("Refreshing...", 160, 240 - FOOTER_H / 2, 1);
+    return;
+  }
+
+  tft.setTextColor((pl >= 0) ? C_UP() : C_DOWN(), C_HEADER());
+  tft.drawString("PLN: " + String(total, 2) + " P&L(" + rangeLabel() + "): " + (pl >= 0 ? "+" : "") + String(pl, 2),
     160, 240 - FOOTER_H / 2, 1);
 }
 
@@ -733,10 +795,10 @@ void drawQuoteGrid(int idx, Quote &q) {
     x + cellW / 2, lineY, 2);
 
   if (portfolioMode && holdings[idx] > 0 && cellH >= 40) {
-    double v, c, pl;
-    if (computePL(idx, v, c, pl)) {
+    double v, pl;
+    if (computePeriodPL(idx, v, pl)) {
       tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
-      tft.drawString("V:" + String(v, 0) + " P&L:" + (pl >= 0 ? "+" : "") + String(pl, 0),
+      tft.drawString("V:" + String(v, 0) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String(pl, 0),
         x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
     }
   }
@@ -919,12 +981,13 @@ void handleRoot() {
       ? (localQuotes[i].pct > 0.05f ? "&#9650;"
          : localQuotes[i].pct < -0.05f ? "&#9660;" : "&mdash;") : "";
 
-    String valStr = "", plStr = "";
-    double v, c, p;
-    if (computePLFor(localQuotes[i], localOrigIdx[i], v, c, p)) {
+    String valStr = "", plStr = "", plClr = clr;
+    double v, p;
+    if (computePeriodPLFor(localQuotes[i], localOrigIdx[i], v, p)) {
       totalVal += v; totalPL += p;
       valStr = String(v, 2);
       plStr = (p >= 0 ? "+" : "") + String(p, 2);
+      plClr = (p >= 0) ? "#00cc44" : "#ff4444";
     }
 
     rows += "<tr>"
@@ -932,32 +995,46 @@ void handleRoot() {
       + "<td class='tnowrap' style='font-weight:700'>" + price + "</td>"
       + "<td class='chg' style='color:" + clr + "'>" + arrow + " " + pct + "</td>"
       + "<td class='tnowrap'>" + valStr + "</td>"
-      + "<td class='tnowrap' style='color:" + clr + "'>" + plStr + "</td>"
+      + "<td class='tnowrap' style='color:" + plClr + "'>" + plStr + "</td>"
       + "</tr>";
   }
 
-  // Holdings & Alerts: quantity + avg cost are read-only (derived from the
-  // transactions above); only the alert thresholds stay editable here.
+  // Holdings & Alerts: quantity, avg cost & P&L are read-only (derived from
+  // the transactions above); only the alert thresholds stay editable here.
+  // This P&L is the real cost-basis figure -- unlike the Live Prices table's
+  // period-based P&L column, it never changes with Chart Period.
   String holdRows = "";
+  double totalRealPL = 0;
+  bool anyRealPl = false;
   for (int i = 0; i < localCount; i++) {
     int orig = localOrigIdx[i];
     float qty; double cost;
     computeCostBasis(orig, qty, cost);
     double avgCost = (qty > 0.00001) ? (cost / qty) : 0.0;
 
+    double plVal, plCost, pl;
+    bool havePl = computePLFor(localQuotes[i], orig, plVal, plCost, pl);
+    String plStr = havePl ? (pl >= 0 ? "+" : "") + String(pl, 2) : "&mdash;";
+    String plClr = havePl ? (pl >= 0 ? "#00cc44" : "#ff4444") : "inherit";
+    if (havePl) { totalRealPL += pl; anyRealPl = true; }
+
     holdRows += "<tr><td>" + localTickers[i] + "</td>"
       + "<td class='tnowrap'>" + String(qty, 4) + "</td>"
       + "<td class='tnowrap'>" + (qty > 0.00001 ? String(avgCost, 2) : "&mdash;") + "</td>"
+      + "<td class='tnowrap' style='color:" + plClr + "'>" + plStr + "</td>"
       + "<td><input class='inp' type='number' name='ahi" + i + "' form='cfgform' value='" + String(localAlertHigh[i], 2)
       + "' step='any' min='0' placeholder='0=off'></td>"
       + "<td><input class='inp' type='number' name='alo" + i + "' form='cfgform' value='" + String(localAlertLow[i], 2)
       + "' step='any' min='0' placeholder='0=off'></td></tr>";
   }
 
-  // Transactions card: dropdown options + recent lots per ticker
+  // Transactions card: dropdown options + recent lots per ticker. Symbols
+  // (not indices) are used as the identifier in both, since the canonical
+  // tickers[] array can get re-sorted by a background refresh between page
+  // render and the user submitting -- see findTickerIndex().
   String tickerOptions = "";
   for (int i = 0; i < localCount; i++) {
-    tickerOptions += "<option value='" + String(localOrigIdx[i]) + "'>" + localTickers[i] + "</option>";
+    tickerOptions += "<option value='" + localTickers[i] + "'>" + localTickers[i] + "</option>";
   }
 
   String txRows = "";
@@ -969,19 +1046,28 @@ void handleRoot() {
       time_t ts = lots[orig][k].ts;
       struct tm tmk; localtime_r(&ts, &tmk);
       char buf[12]; strftime(buf, sizeof(buf), "%d.%m.%Y", &tmk);
+      char isoBuf[11]; strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%d", &tmk);
       String qtyStr = (lots[orig][k].qty >= 0 ? "+" : "") + String(lots[orig][k].qty, 4);
+      double total = lots[orig][k].qty * lots[orig][k].pricePLN;
+      String totalStr = (total >= 0 ? "+" : "") + String(total, 2);
+      String encSym = urlEncode(localTickers[i]);
       txRows += "<tr><td>" + localTickers[i] + "</td><td class='tnowrap'>" + String(buf) + "</td>"
         + "<td class='tnowrap'>" + qtyStr + "</td>"
         + "<td class='tnowrap'>" + String(lots[orig][k].pricePLN, 2) + "</td>"
-        + "<td><a class='dellink' href='/dellot?lt=" + String(orig) + "&lk=" + String(k)
+        + "<td class='tnowrap'>" + totalStr + "</td>"
+        + "<td class='tnowrap'>"
+        + "<a class='editlink' href='#' onclick=\"editLot('" + localTickers[i] + "','" + isoBuf + "',"
+        + String(lots[orig][k].qty, 6) + "," + String(lots[orig][k].pricePLN, 2) + "," + String(k)
+        + ");return false;\">&#9998;</a> "
+        + "<a class='dellink' href='/dellot?lt=" + encSym + "&lk=" + String(k)
         + "' onclick=\"return confirm('Delete this transaction?')\">&#10005;</a></td></tr>";
     }
     if (n > shown) {
-      txRows += "<tr><td colspan='5' class='hint2'>...and " + String(n - shown)
+      txRows += "<tr><td colspan='6' class='hint2'>...and " + String(n - shown)
         + " older (full list at /api/quotes)</td></tr>";
     }
     if (n == 0 && legacyHint[orig] > 0) {
-      txRows += "<tr><td colspan='5' class='hint2' style='color:#e6a23c'>Legacy record detected: "
+      txRows += "<tr><td colspan='6' class='hint2' style='color:#e6a23c'>Legacy record detected: "
         + String(legacyHint[orig], 4) + " units (no purchase price) &mdash; add real transactions below.</td></tr>";
     }
   }
@@ -992,6 +1078,7 @@ void handleRoot() {
     buildRootHtml(darkMode, portfolioMode,
       rows, holdRows, txRows, tickerOptions, tickerList,
       totalVal, totalPL, anyMissing,
+      totalRealPL, anyRealPl,
       refreshSec, brightness, MIN_REFRESH, DEFAULT_REFRESH,
       nightModeEnabled, nightFrom, nightTo,
       chartRange, rangeLabel()));
@@ -1089,19 +1176,24 @@ void handleSave() {
 }
 
 // Adds one dated transaction (buy or sell) for a ticker. Params:
-//   lt = ticker index, ld = date "YYYY-MM-DD", lq = qty (+/-), lp = price PLN/unit
+//   lt = ticker symbol, ld = date "YYYY-MM-DD", lq = qty (+/-), lp = price PLN/unit
 void handleAddLot() {
-  int t = server.hasArg("lt") ? server.arg("lt").toInt() : -1;
+  String sym = server.hasArg("lt") ? server.arg("lt") : "";
   String dateStr = server.hasArg("ld") ? server.arg("ld") : "";
   float qty = server.hasArg("lq") ? server.arg("lq").toFloat() : 0;
   float price = server.hasArg("lp") ? server.arg("lp").toFloat() : -1;
 
-  bool ok = (t >= 0 && t < tickerCount && dateStr.length() >= 10 && qty != 0 && price >= 0);
-  if (ok) {
+  bool paramsOk = (sym.length() && dateStr.length() >= 10 && qty != 0 && price >= 0);
+  bool ok = false;
+  if (paramsOk) {
     time_t ts = parseDateYMD(dateStr);
     xSemaphoreTake(dataMutex, portMAX_DELAY);
-    ok = addLot(t, ts, qty, price);
-    if (ok) { float q; double c; computeCostBasis(t, q, c); holdings[t] = q; }
+    int t = -1;
+    for (int i = 0; i < tickerCount; i++) if (tickers[i] == sym) { t = i; break; }
+    if (t >= 0) {
+      ok = addLot(t, ts, qty, price);
+      if (ok) { float q; double c; computeCostBasis(t, q, c); holdings[t] = q; }
+    }
     xSemaphoreGive(dataMutex);
     if (ok) savePrefs();
   }
@@ -1111,38 +1203,79 @@ void handleAddLot() {
       ok ? "Transaction added!" : "Could not add (check fields / history full)"));
 }
 
-// Deletes one transaction. Params: lt = ticker index, lk = lot index
+// Deletes one transaction. Params: lt = ticker symbol, lk = lot index
 void handleDelLot() {
-  int t = server.hasArg("lt") ? server.arg("lt").toInt() : -1;
+  String sym = server.hasArg("lt") ? server.arg("lt") : "";
   int k = server.hasArg("lk") ? server.arg("lk").toInt() : -1;
-  bool ok = (t >= 0 && t < tickerCount && k >= 0 && k < lotCount[t]);
-  if (ok) {
+
+  bool ok = false;
+  if (sym.length() && k >= 0) {
     xSemaphoreTake(dataMutex, portMAX_DELAY);
-    deleteLot(t, k);
-    float q; double c; computeCostBasis(t, q, c); holdings[t] = q;
+    int t = -1;
+    for (int i = 0; i < tickerCount; i++) if (tickers[i] == sym) { t = i; break; }
+    if (t >= 0 && k < lotCount[t]) {
+      deleteLot(t, k);
+      float q; double c; computeCostBasis(t, q, c); holdings[t] = q;
+      ok = true;
+    }
     xSemaphoreGive(dataMutex);
-    savePrefs();
+    if (ok) savePrefs();
   }
   server.send(200, "text/html; charset=utf-8",
     buildRedirectPage(darkMode, ok ? "\xf0\x9f\x97\x91" : "\xe2\x9a\xa0\xef\xb8\x8f",
       ok ? "Transaction deleted" : "Not found"));
 }
 
+// Edits an existing transaction in place (used by the "edit" pencil icon,
+// which repopulates the Add Transaction form in edit mode). Params:
+//   lt = ticker symbol, lk = lot index, ld = date "YYYY-MM-DD",
+//   lq = qty (+/-), lp = price PLN/unit
+void handleEditLot() {
+  String sym = server.hasArg("lt") ? server.arg("lt") : "";
+  int k = server.hasArg("lk") ? server.arg("lk").toInt() : -1;
+  String dateStr = server.hasArg("ld") ? server.arg("ld") : "";
+  float qty = server.hasArg("lq") ? server.arg("lq").toFloat() : 0;
+  float price = server.hasArg("lp") ? server.arg("lp").toFloat() : -1;
+
+  bool ok = false;
+  if (sym.length() && k >= 0 && dateStr.length() >= 10 && qty != 0 && price >= 0) {
+    time_t ts = parseDateYMD(dateStr);
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    int t = -1;
+    for (int i = 0; i < tickerCount; i++) if (tickers[i] == sym) { t = i; break; }
+    if (t >= 0 && k < lotCount[t]) {
+      // Delete + re-insert (via addLot) rather than overwrite in place, so
+      // the lot lands back in date-sorted order even if the edited date
+      // moved it -- computeCostBasis() relies on chronological order for
+      // the average-cost math.
+      deleteLot(t, k);
+      ok = addLot(t, ts, qty, price);
+      if (ok) { float q; double c; computeCostBasis(t, q, c); holdings[t] = q; }
+    }
+    xSemaphoreGive(dataMutex);
+    if (ok) savePrefs();
+  }
+
+  server.send(200, "text/html; charset=utf-8",
+    buildRedirectPage(darkMode, ok ? "\xe2\x9c\x85" : "\xe2\x9a\xa0\xef\xb8\x8f",
+      ok ? "Transaction updated!" : "Could not update (check fields)"));
+}
+
 // Returns the JSON-encoded closing price (in PLN) for a ticker on/near a
 // past date. Called from the transaction form's "Fetch" button so the user
 // doesn't have to look up historical prices by hand. Params:
-//   lt = ticker index, ld = date "YYYY-MM-DD"
+//   lt = ticker symbol, ld = date "YYYY-MM-DD"
 void handleHistPrice() {
-  int t = server.hasArg("lt") ? server.arg("lt").toInt() : -1;
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  String sym = server.hasArg("lt") ? server.arg("lt") : "";
   String dateStr = server.hasArg("ld") ? server.arg("ld") : "";
 
-  if (t < 0 || t >= tickerCount || dateStr.length() < 10) {
+  if (sym.isEmpty() || findTickerIndex(sym) < 0 || dateStr.length() < 10) {
     server.send(200, "application/json", "{\"ok\":false}");
     return;
   }
 
   time_t target = parseDateYMD(dateStr);
-  String sym = tickers[t];
   float pricePLN = 0;
   bool ok = fetchHistoricalPricePLN(sym, target, pricePLN);
 
@@ -1198,6 +1331,36 @@ void handleForceRefresh() {
     buildRedirectPage(darkMode, "\xf0\x9f\x94\x84", "Refreshing..."));
 }
 
+// Flat JSON export of the raw transaction history (cost basis), independent
+// of live quotes -- always reflects whatever is currently held in memory
+// (the same data savePrefs() persists to NVS), so it's a live backup: save
+// this response externally and you can re-enter it if the device is ever
+// reflashed/erased. One object per transaction, oldest first per ticker.
+void handleApiTransactions() {
+  String json = "[\n";
+  xSemaphoreTake(dataMutex, portMAX_DELAY);
+  bool first = true;
+  for (int i = 0; i < tickerCount; i++) {
+    for (int k = 0; k < lotCount[i]; k++) {
+      struct tm tmk; time_t ts = lots[i][k].ts; localtime_r(&ts, &tmk);
+      char buf[11]; strftime(buf, sizeof(buf), "%Y-%m-%d", &tmk);
+      double total = (double)lots[i][k].qty * lots[i][k].pricePLN;
+
+      if (!first) json += ",\n";
+      first = false;
+      json += "  {\"symbol\": \"" + tickers[i] + "\""
+        + ", \"date\": \"" + String(buf) + "\""
+        + ", \"qty\": " + String(lots[i][k].qty, 6)
+        + ", \"pricePLN\": " + String(lots[i][k].pricePLN, 2)
+        + ", \"totalPLN\": " + String(total, 2) + "}";
+    }
+  }
+  xSemaphoreGive(dataMutex);
+  json += "\n]\n";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+}
+
 // ==========================================
 // SETUP & LOOP
 // ==========================================
@@ -1238,6 +1401,15 @@ void setup() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1); tzset();
 
+  // configTime() only starts SNTP in the background -- it doesn't block.
+  // Without this wait, the clock briefly reads epoch 0, which in CET is
+  // 1970-01-01 01:00, and anything timestamped in that window (e.g. the
+  // first fetch's lastFetchTime) would show the wrong time until the next
+  // refresh cycle. 1700000000 is just a "sync clearly landed" sanity floor
+  // (~2023-11-14), not an expiry; give up after 8s and carry on regardless.
+  uint32_t syncStart = millis();
+  while (time(nullptr) < 1700000000 && millis() - syncStart < 8000) delay(200);
+
   tft.fillScreen(C_BG()); tft.setTextColor(TFT_GREEN, C_BG());
   tft.setTextDatum(MC_DATUM);
   tft.drawString("http://" + WiFi.localIP().toString() + "/", 160, 110, 2);
@@ -1250,8 +1422,10 @@ void setup() {
   server.on("/addlot", HTTP_POST, handleAddLot);
   server.on("/api/histprice", HTTP_GET, handleHistPrice);
   server.on("/dellot", HTTP_GET, handleDelLot);
+  server.on("/editlot", HTTP_POST, handleEditLot);
   server.on("/refresh", HTTP_GET, handleForceRefresh);
   server.on("/api/quotes", HTTP_GET, handleApiQuotes);
+  server.on("/api/transactions", HTTP_GET, handleApiTransactions);
   server.begin();
   MDNS.begin("portfolio-tracker");
 
