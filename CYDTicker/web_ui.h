@@ -68,7 +68,7 @@ String buildRootHtml(
   h += ".rm{margin:0;width:26px;padding:5px 0;font-size:11px;background:" + String(rmbg)
     + ";color:" + rmclr + ";border:1px solid " + rmclr + ";border-radius:5px;flex-shrink:0}";
   h += ".rm:hover{background:" + String(rmclr) + ";color:#fff}";
-  h += ".addbtn{margin-top:6px;width:auto;padding:5px 14px;font-size:11px;"
+  h += ".addbtn{margin-top:6px;width:auto;padding:7px 14px;font-size:11px;"
     "background:transparent;color:#0af;border:1px solid #0af;border-radius:5px}";
   h += ".addbtn:hover{background:#0af;color:#000}";
   h += ".trow{display:flex;gap:6px;margin-bottom:5px;align-items:center}";
@@ -99,12 +99,16 @@ String buildRootHtml(
   h += ".fetchbtn{flex:0 0 auto;margin:0;width:auto;padding:7px 12px;font-size:11px;white-space:nowrap;"
     "background:transparent;color:#0af;border:1px solid #0af;border-radius:6px}";
   h += ".fetchbtn:hover{background:#0af;color:#000}";
+  h += ".rmtext{flex:0 0 auto;margin:0;width:auto;padding:7px 12px;font-size:11px;white-space:nowrap;"
+    "background:transparent;color:" + String(rmclr) + ";border:1px solid " + rmclr + ";border-radius:6px}";
+  h += ".rmtext:hover{background:" + String(rmclr) + ";color:#fff}";
+  h += ".trow-group{border-top:1px solid " + String(bord) + ";padding-top:8px;margin-top:8px}";
+  h += ".trow-group:first-child{border-top:none;padding-top:0;margin-top:0}";
   h += "a{color:#0af;text-decoration:none}";
   h += "</style></head><body>";
 
   h += "<h1>ESP32 \xc2\xb7 CYD</h1><h2>Portfolio Tracker</h2>";
 
-  // Live Prices table
   h += "<div class='card'><h3>Live Prices</h3><div class='tbl-wrap'>";
   h += "<table><thead><tr>"
     "<th>Symbol</th><th>Price (PLN)</th><th>Change (" + rangeLabel + ")</th>"
@@ -161,30 +165,39 @@ String buildRootHtml(
 
   h += "</form>";
 
-  // Transactions card -- separate form, posts to /addlot (kept outside the
-  // settings form since HTML forms cannot be nested).
+  // Transactions card -- kept outside the settings form since HTML forms
+  // cannot be nested. Rows are added/removed client-side; on submit each
+  // row is posted individually via fetch() to /addlot (or /editlot when
+  // editing), so several transactions can be entered and saved together.
   h += "<div class='card'><h3>Transactions (cost basis)</h3><div class='tbl-wrap'>"
     "<table><thead><tr><th>Symbol</th><th>Date</th><th>Qty</th><th>Price PLN/unit</th><th>Total PLN</th><th></th></tr></thead>"
     "<tbody>" + txRows + "</tbody></table></div>";
-  h += "<form method='POST' action='/addlot' class='txform' id='txform'>"
-    "<select class='inp' name='lt' id='txSym'>" + tickerOptions + "</select>"
-    "<input class='inp' type='date' name='ld' id='txDate' required>"
-    "<input class='inp' type='number' name='lq' id='txQty' step='any' placeholder='+1.5 buy / -0.5 sell' required>"
-    "<div class='pricerow'>"
-    "<input class='inp' type='number' name='lp' id='txPrice' step='any' min='0' placeholder='price PLN/unit' required>"
-    "<button type='button' class='fetchbtn' onclick='fetchHistPrice()'>&#8635; Fetch</button>"
-    "</div>"
-    "<input type='hidden' name='lk' id='txLotIdx' value=''>"
-    "<span class='hint2' id='fetchStatus'></span>"
-    "<div class='row' style='width:100%;gap:8px;margin-top:0'>"
-    "<button type='submit' id='txSubmitBtn' style='margin-top:0;flex:1'>+ Add Transaction</button>"
+  h += "<div id='txRows'></div>"
+    "<button type='button' class='addbtn' id='txAddBtn' onclick='addTxRow()'>+ Add Another</button>"
+    "<input type='hidden' id='txLotIdx' value=''>"
+    "<input type='hidden' id='txLotOrigSym' value=''>"
+    "<div class='row' style='width:100%;gap:8px;margin-top:10px'>"
+    "<button type='button' id='txSubmitBtn' style='margin-top:0;flex:1' onclick='submitTx()'>+ Add Transaction</button>"
     "<button type='button' id='txCancelBtn' class='fetchbtn' style='display:none' onclick='cancelEdit()'>Cancel</button>"
     "</div>"
-    "</form>";
+    "<span class='hint2' id='fetchStatus'></span>";
+  h += "<template id='txRowTpl'><div class='trow-group' data-idx='__IDX__'>"
+    "<div class='txform'>"
+    "<select class='inp' id='txSym__IDX__'>" + tickerOptions + "</select>"
+    "<input class='inp' type='date' id='txDate__IDX__' required>"
+    "<input class='inp' type='number' id='txQty__IDX__' step='any' placeholder='+1.5 buy / -0.5 sell' required>"
+    "<div class='pricerow'>"
+    "<input class='inp' type='number' id='txPrice__IDX__' step='any' min='0' placeholder='price PLN/unit' required>"
+    "<button type='button' class='fetchbtn' onclick='fetchHistPrice(__IDX__)'>&#8635; Fetch</button>"
+    "</div></div>"
+    "<div class='row' style='justify-content:space-between;margin-top:4px'>"
+    "<span class='hint2' id='txRowStatus__IDX__'></span>"
+    "<button type='button' class='rmtext' id='txRmBtn__IDX__' onclick='removeTxRow(__IDX__)'>&#10005; Remove</button>"
+    "</div></div></template>";
   h += "<div class='hint'>Positive qty = buy, negative = sell. Pick any date, including past purchases you still need to backfill. "
     "Your real cost-basis P&amp;L (average-cost method, from these prices) is shown in Holdings &amp; Alerts below, independent of the chart period. "
     "The Fetch button looks up that date's closing price and same-day exchange rate; double-check it against your broker statement before saving. "
-    "Use &#9998; on a row to edit it (fills this form in edit mode) or &#10005; to delete it.</div>"
+    "Use + Add Another to enter several transactions before saving them together. Use &#9998; on a row to edit it (fills this form in edit mode) or &#10005; to delete it.</div>"
     "<div class='hint'><a href='/api/transactions' target='_blank'>Transactions JSON (backup)</a> &mdash; always reflects what's currently saved. "
     "Save this externally so a device reflash/erase doesn't lose your history.</div></div>";
 
@@ -211,7 +224,6 @@ String buildRootHtml(
 
   h += "<div style='height:28px'></div>";
 
-  // JS
   h += "<script>";
   h += "var T='" + tickerList + "'.split(',').filter(Boolean);";
   h += "function render(){"
@@ -250,41 +262,113 @@ String buildRootHtml(
     "rg.appendChild(b);"
     "});"
     "})();";
-  h += "function fetchHistPrice(){"
-    "var sym=document.getElementById('txSym').value;"
-    "var date=document.getElementById('txDate').value;"
-    "var priceEl=document.getElementById('txPrice');"
-    "var statusEl=document.getElementById('fetchStatus');"
+  h += "var txSeq=0;"
+    "function tplHtml(idx){var t=document.getElementById('txRowTpl').innerHTML;return t.split('__IDX__').join(idx);}"
+    "function addTxRow(foc){"
+    "var idx=txSeq++;"
+    "var wrap=document.createElement('div');wrap.innerHTML=tplHtml(idx);"
+    "document.getElementById('txRows').appendChild(wrap.firstElementChild);"
+    "updateRemoveButtons();"
+    "if(foc!==false){var el=document.getElementById('txSym'+idx);if(el)el.focus();}"
+    "return idx;"
+    "}"
+    "function removeTxRow(idx){"
+    "var el=document.querySelector('.trow-group[data-idx=\"'+idx+'\"]');"
+    "if(el)el.remove();"
+    "if(!document.querySelector('.trow-group'))addTxRow(false);"
+    "updateRemoveButtons();"
+    "}"
+    "function updateRemoveButtons(){"
+    "var groups=document.querySelectorAll('.trow-group');"
+    "groups.forEach(function(g){"
+    "var idx=g.getAttribute('data-idx');"
+    "var btn=document.getElementById('txRmBtn'+idx);"
+    "if(btn)btn.style.display=(groups.length>1)?'':'none';"
+    "});"
+    "}";
+
+  h += "function fetchHistPrice(idx){"
+    "var sym=document.getElementById('txSym'+idx).value;"
+    "var date=document.getElementById('txDate'+idx).value;"
+    "var priceEl=document.getElementById('txPrice'+idx);"
+    "var statusEl=document.getElementById('txRowStatus'+idx);"
     "if(!date){statusEl.textContent='Pick a date first.';return;}"
     "statusEl.textContent='Fetching...';"
     "fetch('/api/histprice?lt='+encodeURIComponent(sym)+'&ld='+encodeURIComponent(date))"
     ".then(function(r){return r.json();})"
     ".then(function(d){"
-    "if(d.ok){priceEl.value=d.pricePLN.toFixed(2);statusEl.textContent='Loaded closing price for that date. Double-check before saving.';}"
-    "else{statusEl.textContent='No data for that date -- enter the price manually.';}"
+    "if(d.ok){priceEl.value=d.pricePLN.toFixed(2);statusEl.textContent='Loaded closing price. Double-check before saving.';}"
+    "else{statusEl.textContent='No data for that date -- enter manually.';}"
     "})"
-    ".catch(function(){statusEl.textContent='Fetch failed -- enter the price manually.';});"
+    ".catch(function(){statusEl.textContent='Fetch failed -- enter manually.';});"
     "}";
 
-  h += "function editLot(sym,date,qty,price,idx){"
-    "document.getElementById('txSym').value=sym;"
-    "document.getElementById('txDate').value=date;"
-    "document.getElementById('txQty').value=qty;"
-    "document.getElementById('txPrice').value=price;"
-    "document.getElementById('txLotIdx').value=idx;"
-    "document.getElementById('txform').action='/editlot';"
+  h += "function submitTx(){"
+    "var editing=document.getElementById('txLotIdx').value!=='';"
+    "var groups=document.querySelectorAll('.trow-group');"
+    "var rows=[];var incomplete=false;"
+    "groups.forEach(function(g){"
+    "var idx=g.getAttribute('data-idx');"
+    "var sym=document.getElementById('txSym'+idx).value;"
+    "var date=document.getElementById('txDate'+idx).value;"
+    "var qty=document.getElementById('txQty'+idx).value;"
+    "var price=document.getElementById('txPrice'+idx).value;"
+    "if(!date&&!qty&&price==='')return;"
+    "if(!date||!qty||price===''){incomplete=true;return;}"
+    "rows.push({sym:sym,date:date,qty:qty,price:price});"
+    "});"
+    "var statusEl=document.getElementById('fetchStatus');"
+    "if(incomplete){statusEl.textContent='Some rows are missing fields -- fill them in or remove the row.';return;}"
+    "if(rows.length===0){statusEl.textContent='Nothing to save -- fill in at least one transaction.';return;}"
+    "statusEl.textContent='Saving '+rows.length+' transaction'+(rows.length>1?'s':'')+'...';"
+    "var endpoint=editing?'/editlot':'/addlot';"
+    "var lotIdx=document.getElementById('txLotIdx').value;"
+    "var origSym=document.getElementById('txLotOrigSym').value;"
+    "var chain=Promise.resolve();var okCount=0,failCount=0;"
+    "rows.forEach(function(r){"
+    "chain=chain.then(function(){"
+    "var body='lt='+encodeURIComponent(r.sym)+'&ld='+encodeURIComponent(r.date)"
+    "+'&lq='+encodeURIComponent(r.qty)+'&lp='+encodeURIComponent(r.price);"
+    "if(editing)body+='&lk='+encodeURIComponent(lotIdx)+'&lo='+encodeURIComponent(origSym);"
+    "return fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})"
+    ".then(function(resp){return resp.text();})"
+    ".then(function(txt){if(txt.indexOf('Could not')!==-1)failCount++;else okCount++;})"
+    ".catch(function(){failCount++;});"
+    "});"
+    "});"
+    "chain.then(function(){"
+    "statusEl.textContent=okCount+' saved'+(failCount?(', '+failCount+' failed'):'')+'. Reloading...';"
+    "setTimeout(function(){window.location.href='/';},600);"
+    "});"
+    "}";
+
+  h += "function editLot(sym,date,qty,price,lotIdx){"
+    "document.getElementById('txRows').innerHTML='';"
+    "var idx=addTxRow(false);"
+    "document.getElementById('txSym'+idx).value=sym;"
+    "document.getElementById('txDate'+idx).value=date;"
+    "document.getElementById('txQty'+idx).value=qty;"
+    "document.getElementById('txPrice'+idx).value=price;"
+    "document.getElementById('txLotIdx').value=lotIdx;"
+    "document.getElementById('txLotOrigSym').value=sym;"
+    "document.getElementById('txAddBtn').style.display='none';"
+    "updateRemoveButtons();"
     "document.getElementById('txSubmitBtn').textContent='\\u2713 Update Transaction';"
     "document.getElementById('txCancelBtn').style.display='inline-block';"
     "document.getElementById('fetchStatus').textContent='Editing existing transaction -- change values and Update, or Cancel.';"
-    "document.getElementById('txform').scrollIntoView({behavior:'smooth',block:'center'});"
+    "document.getElementById('txRows').scrollIntoView({behavior:'smooth',block:'center'});"
     "}";
   h += "function cancelEdit(){"
-    "var f=document.getElementById('txform');"
-    "f.reset();f.action='/addlot';"
+    "document.getElementById('txLotIdx').value='';"
+    "document.getElementById('txLotOrigSym').value='';"
+    "document.getElementById('txRows').innerHTML='';"
+    "addTxRow(false);"
+    "document.getElementById('txAddBtn').style.display='';"
     "document.getElementById('txSubmitBtn').textContent='+ Add Transaction';"
     "document.getElementById('txCancelBtn').style.display='none';"
     "document.getElementById('fetchStatus').textContent='';"
     "}";
+  h += "addTxRow(false);";
 
   h += "</script>";
 

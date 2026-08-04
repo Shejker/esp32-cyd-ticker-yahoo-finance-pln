@@ -1,0 +1,22 @@
+[
+  {"symbol": "WEBN.DE", "date": "2026-01-20", "qty": 94.480003, "pricePLN": 48.06, "totalPLN": 4540.71},
+  {"symbol": "WEBN.DE", "date": "2026-03-10", "qty": 77.180000, "pricePLN": 48.49, "totalPLN": 3742.46},
+  {"symbol": "WEBN.DE", "date": "2026-05-08", "qty": 72.750000, "pricePLN": 51.59, "totalPLN": 3753.17},
+  {"symbol": "WEBN.DE", "date": "2026-06-30", "qty": 68.599998, "pricePLN": 54.61, "totalPLN": 3746.25},
+  {"symbol": "XAUT-USD", "date": "2026-02-06", "qty": 0.250000, "pricePLN": 17587.43, "totalPLN": 4396.86},
+  {"symbol": "XAUT-USD", "date": "2026-05-08", "qty": 0.250000, "pricePLN": 16947.11, "totalPLN": 4236.78},
+  {"symbol": "XAUT-USD", "date": "2026-06-01", "qty": 0.250000, "pricePLN": 16204.88, "totalPLN": 4051.22},
+  {"symbol": "XAUT-USD", "date": "2026-08-01", "qty": 0.250000, "pricePLN": 15092.73, "totalPLN": 3773.18},
+  {"symbol": "ANAV.DE", "date": "2026-01-20", "qty": 14.270000, "pricePLN": 79.00, "totalPLN": 1127.33},
+  {"symbol": "ANAV.DE", "date": "2026-03-10", "qty": 11.810000, "pricePLN": 79.56, "totalPLN": 939.60},
+  {"symbol": "ANAV.DE", "date": "2026-05-08", "qty": 10.510000, "pricePLN": 90.90, "totalPLN": 955.36},
+  {"symbol": "ANAV.DE", "date": "2026-06-30", "qty": 9.579000, "pricePLN": 98.46, "totalPLN": 943.15},
+  {"symbol": "BTC-USD", "date": "2025-12-12", "qty": 0.001418, "pricePLN": 324764.97, "totalPLN": 460.52},
+  {"symbol": "BTC-USD", "date": "2025-12-26", "qty": 0.000260, "pricePLN": 312152.37, "totalPLN": 81.16},
+  {"symbol": "BTC-USD", "date": "2026-04-22", "qty": 0.004005, "pricePLN": 282053.56, "totalPLN": 1129.62},
+  {"symbol": "BTC-USD", "date": "2026-05-08", "qty": 0.001710, "pricePLN": 289109.38, "totalPLN": 494.38},
+  {"symbol": "BTC-USD", "date": "2026-06-01", "qty": 0.001870, "pricePLN": 258940.00, "totalPLN": 484.22},
+  {"symbol": "BTC-USD", "date": "2026-06-29", "qty": 0.002275, "pricePLN": 226368.08, "totalPLN": 514.99},
+  {"symbol": "BTC-USD", "date": "2026-07-17", "qty": 0.001672, "pricePLN": 241428.14, "totalPLN": 403.67},
+  {"symbol": "BTC-USD", "date": "2026-08-01", "qty": 0.001944, "pricePLN": 234351.97, "totalPLN": 455.58}
+]

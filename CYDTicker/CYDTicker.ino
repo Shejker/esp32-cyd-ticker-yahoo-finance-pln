@@ -141,10 +141,6 @@ void applyBrightness(int val) {
   analogWrite(BL_PIN, val);
 }
 
-String displaySym(const String &sym) {
-  return sym;
-}
-
 String getCurrencySymbol(const String &curr) {
   if (curr == "EUR") return "EUR ";
   if (curr == "USD") return "$";
@@ -773,36 +769,69 @@ void drawQuoteGrid(int idx, Quote &q) {
   tft.fillRect(x + 1, y + 1, cellW - 2, cellH - 2, C_PANEL());
   tft.drawRect(x, y, cellW, cellH, C_BORDER());
 
+  // Denser grids (>4 tickers -> 2 columns) leave only ~160px of cell
+  // width, so the normal font (2) overlaps between symbol/price/pct.
+  // Drop to the smaller built-in font for those layouts; single-column
+  // grids (<=4 tickers, full 320px width) keep the larger, easier-to-read one.
+  int mainFont = (cols == 2) ? 1 : 2;
+
   if (!q.valid) {
     tft.setTextColor(C_MUTED(), C_PANEL()); tft.setTextDatum(MC_DATUM);
-    tft.drawString(displaySym(q.sym) + " (err)", x + cellW / 2, y + cellH / 2, 2); return;
+    tft.drawString(q.sym + " (err)", x + cellW / 2, y + cellH / 2, mainFont); return;
   }
 
   float r = getRateToPLN(q.currency); bool cv = (r > 0 && q.currency != "PLN");
   float dP = cv ? q.price * r : q.price;
   uint16_t cPct = q.pct > 0.05f ? C_UP() : q.pct < -0.05f ? C_DOWN() : C_FLAT();
 
-  int lineY = (portfolioMode && holdings[idx] > 0) ? y + cellH / 3 - 2 : y + cellH / 2;
-  tft.setTextDatum(ML_DATUM); tft.setTextColor(C_LABEL(), C_PANEL());
-  tft.drawString(displaySym(q.sym), x + 6, lineY, 2);
-  tft.setTextDatum(MR_DATUM); tft.setTextColor(cPct, C_PANEL());
-  tft.drawString((q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%", x + cellW - 6, lineY, 2);
-  tft.setTextDatum(MC_DATUM); tft.setTextColor(C_TEXT(), C_PANEL());
-  tft.drawString(formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency)),
-    x + cellW / 2, lineY, 2);
+  // Symbol gets its own line instead of sharing one row with price+pct --
+  // that's what was colliding for long symbols (e.g. "XAUT-USD") next to
+  // a "PLN 1234.56" price in the narrow 2-column layout. Price+pct share
+  // the second line, and the optional V:/P&L line becomes a third.
+  bool showPL = portfolioMode && holdings[idx] > 0 && cellH >= 40;
+  int lines = showPL ? 3 : 2;
+  int y1 = y + cellH * 1 / (lines + 1);
+  int y2 = y + cellH * 2 / (lines + 1);
 
-  if (portfolioMode && holdings[idx] > 0 && cellH >= 40) {
+  tft.setTextDatum(MC_DATUM); tft.setTextColor(C_LABEL(), C_PANEL());
+  tft.drawString(q.sym, x + cellW / 2, y1, mainFont);
+
+  String priceStr = formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency));
+  String pctStr = (q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%";
+  int gap = 8;
+  int wPrice = tft.textWidth(priceStr, mainFont);
+  int wPct = tft.textWidth(pctStr, mainFont);
+  int startX = x + (cellW - wPrice - gap - wPct) / 2;
+  tft.setTextDatum(ML_DATUM); tft.setTextColor(C_TEXT(), C_PANEL());
+  tft.drawString(priceStr, startX, y2, mainFont);
+  tft.setTextColor(cPct, C_PANEL());
+  tft.drawString(pctStr, startX + wPrice + gap, y2, mainFont);
+
+  if (showPL) {
     double v, pl;
     if (computePeriodPL(idx, v, pl)) {
-      tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
+      int y3 = y + cellH * 3 / (lines + 1);
+      tft.setTextDatum(MC_DATUM); tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
       tft.drawString("V:" + String((long)round(v)) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String((long)round(pl)),
-        x + cellW / 2, y + (cellH * 2 / 3) + 4, 1);
+        x + cellW / 2, y3, 1);
     }
   }
 
   bool br = (alertHigh[idx] > 0 && dP >= alertHigh[idx]) || (alertLow[idx] > 0 && dP <= alertLow[idx]);
   if (br) tft.fillCircle(x + cellW - 5, y + 5, 3, C_ALERT());
   else if (alertHigh[idx] > 0 || alertLow[idx] > 0) tft.drawCircle(x + cellW - 5, y + 5, 3, C_ALERT());
+}
+
+// Fills a grid slot that has no ticker in it (e.g. 5 tickers in a 2x3
+// grid leaves one slot over) with the same panel look as a real cell,
+// instead of leaving it as a bare black square against the grey panels.
+void drawEmptyGridCell(int idx) {
+  int cols = (tickerCount <= 4) ? 1 : 2;
+  int cellW = 320 / cols;
+  int cellH = gridAreaHeight() / ((tickerCount + cols - 1) / cols);
+  int x = (idx % cols) * cellW, y = HEADER_H + (idx / cols) * cellH;
+  tft.fillRect(x + 1, y + 1, cellW - 2, cellH - 2, C_PANEL());
+  tft.drawRect(x, y, cellW, cellH, C_BORDER());
 }
 
 void drawDetailView(int idx) {
@@ -865,6 +894,11 @@ void drawAll() {
       tft.fillRect(0, HEADER_H, 320, 240 - HEADER_H, C_BG());
     }
     for (int i = 0; i < tickerCount; i++) drawQuoteGrid(i, quotes[i]);
+    if (tickerCount > 0) {
+      int cols = (tickerCount <= 4) ? 1 : 2;
+      int totalCells = cols * ((tickerCount + cols - 1) / cols);
+      for (int i = tickerCount; i < totalCells; i++) drawEmptyGridCell(i);
+    }
     if (portfolioMode) drawPortfolioFooter();
   } else {
     drawDetailView(detailIdx);
@@ -1220,14 +1254,18 @@ void handleDelLot() {
   }
   server.send(200, "text/html; charset=utf-8",
     buildRedirectPage(darkMode, ok ? "\xf0\x9f\x97\x91" : "\xe2\x9a\xa0\xef\xb8\x8f",
-      ok ? "Transaction deleted" : "Not found"));
+      ok ? "Transaction deleted" : "Transaction not found"));
 }
 
 // Edits an existing transaction in place (used by the "edit" pencil icon,
 // which repopulates the Add Transaction form in edit mode). Params:
-//   lt = ticker symbol, lk = lot index, ld = date "YYYY-MM-DD",
-//   lq = qty (+/-), lp = price PLN/unit
+//   lo = original ticker symbol (identifies which lot to remove), lt =
+//   target ticker symbol (may differ from lo if the symbol was changed in
+//   the dropdown before saving), lk = lot index within the original
+//   ticker's history, ld = date "YYYY-MM-DD", lq = qty (+/-),
+//   lp = price PLN/unit
 void handleEditLot() {
+  String origSym = server.hasArg("lo") ? server.arg("lo") : (server.hasArg("lt") ? server.arg("lt") : "");
   String sym = server.hasArg("lt") ? server.arg("lt") : "";
   int k = server.hasArg("lk") ? server.arg("lk").toInt() : -1;
   String dateStr = server.hasArg("ld") ? server.arg("ld") : "";
@@ -1235,19 +1273,25 @@ void handleEditLot() {
   float price = server.hasArg("lp") ? server.arg("lp").toFloat() : -1;
 
   bool ok = false;
-  if (sym.length() && k >= 0 && dateStr.length() >= 10 && qty != 0 && price >= 0) {
+  if (origSym.length() && sym.length() && k >= 0 && dateStr.length() >= 10 && qty != 0 && price >= 0) {
     time_t ts = parseDateYMD(dateStr);
     xSemaphoreTake(dataMutex, portMAX_DELAY);
-    int t = -1;
-    for (int i = 0; i < tickerCount; i++) if (tickers[i] == sym) { t = i; break; }
-    if (t >= 0 && k < lotCount[t]) {
-      // Delete + re-insert (via addLot) rather than overwrite in place, so
-      // the lot lands back in date-sorted order even if the edited date
-      // moved it -- computeCostBasis() relies on chronological order for
-      // the average-cost math.
-      deleteLot(t, k);
-      ok = addLot(t, ts, qty, price);
-      if (ok) { float q; double c; computeCostBasis(t, q, c); holdings[t] = q; }
+    int origT = -1, newT = -1;
+    for (int i = 0; i < tickerCount; i++) {
+      if (tickers[i] == origSym) origT = i;
+      if (tickers[i] == sym) newT = i;
+    }
+    if (origT >= 0 && newT >= 0 && k < lotCount[origT]) {
+      // Snapshot the lot before removing it -- if the symbol was changed
+      // and the target ticker's history is already full, addLot() below
+      // fails and we restore the original instead of silently losing it.
+      Lot backup = lots[origT][k];
+      deleteLot(origT, k);
+      ok = addLot(newT, ts, qty, price);
+      if (!ok) addLot(origT, backup.ts, backup.qty, backup.pricePLN);
+      float q; double c;
+      computeCostBasis(origT, q, c); holdings[origT] = q;
+      if (newT != origT) { computeCostBasis(newT, q, c); holdings[newT] = q; }
     }
     xSemaphoreGive(dataMutex);
     if (ok) savePrefs();
@@ -1255,7 +1299,7 @@ void handleEditLot() {
 
   server.send(200, "text/html; charset=utf-8",
     buildRedirectPage(darkMode, ok ? "\xe2\x9c\x85" : "\xe2\x9a\xa0\xef\xb8\x8f",
-      ok ? "Transaction updated!" : "Could not update (check fields)"));
+      ok ? "Transaction updated!" : "Could not update (check fields / target history full)"));
 }
 
 // Returns the JSON-encoded closing price (in PLN) for a ticker on/near a

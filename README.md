@@ -83,11 +83,12 @@ There are two distinct P&L figures in this app — don't confuse them:
 | | Where | Meaning |
 |---|---|---|
 | **Period P&L** | Live Prices table, device grid & footer | Paper gain/loss from price movement over the selected Chart Period. Changes when you change the period. |
-| **Real P&L** | Holdings & Alerts | Actual profit/loss vs. what you paid, from your Transactions (average-cost method). Independent of Chart Period. |
+| **Real P&L** | Holdings & Alerts | Actual profit/loss vs. what you paid, from your Transactions (average-cost method). Independent of Chart Period. A total across all holdings is shown below the table. |
 
 **Transactions (cost basis)** — the source of truth for Holdings & real P&L:
 
 - Log each buy (positive qty) or sell (negative qty) with its real date and price in PLN
+- **+ Add Another** stages several transactions at once — fill in as many rows as you need, then save them all together instead of one save cycle per entry
 - **Fetch** button auto-fills the price field with that date's closing price, converted using the exchange rate from the *same day* (not today's rate)
 - Every row shows Total PLN (qty × price) so you can see what was actually spent or received
 - &#9998; edits a transaction in place; &#10005; deletes it (both update Holdings & real P&L immediately)
@@ -145,7 +146,7 @@ Standard Yahoo Finance format:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/quotes` | GET | All ticker data as JSON — `pricePLN`, `pct`, `range`, `nativePrice`, `nativeCurrency`, `valid` |
+| `/api/quotes` | GET | All ticker data as JSON — `sym`, `pricePLN`, `pct`, `range`, `nativePrice`, `nativeCurrency`, `heldQty`, `costBasisPLN`, `plPLN`, `lots[]` (`ts`, `qty`, `pricePLN`), `valid` |
 | `/api/transactions` | GET | Full transaction history as JSON (`symbol`, `date`, `qty`, `pricePLN`, `totalPLN`) — a live backup |
 | `/api/histprice` | GET | Closing price (PLN) for a ticker on/near a given date; params `lt` (symbol), `ld` (date) |
 | `/refresh` | GET | Triggers an immediate data fetch |
