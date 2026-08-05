@@ -769,10 +769,6 @@ void drawQuoteGrid(int idx, Quote &q) {
   tft.fillRect(x + 1, y + 1, cellW - 2, cellH - 2, C_PANEL());
   tft.drawRect(x, y, cellW, cellH, C_BORDER());
 
-  // Denser grids (>4 tickers -> 2 columns) leave only ~160px of cell
-  // width, so the normal font (2) overlaps between symbol/price/pct.
-  // Drop to the smaller built-in font for those layouts; single-column
-  // grids (<=4 tickers, full 320px width) keep the larger, easier-to-read one.
   int mainFont = (cols == 2) ? 1 : 2;
 
   if (!q.valid) {
@@ -784,42 +780,87 @@ void drawQuoteGrid(int idx, Quote &q) {
   float dP = cv ? q.price * r : q.price;
   uint16_t cPct = q.pct > 0.05f ? C_UP() : q.pct < -0.05f ? C_DOWN() : C_FLAT();
 
-  // Symbol gets its own line instead of sharing one row with price+pct --
-  // that's what was colliding for long symbols (e.g. "XAUT-USD") next to
-  // a "PLN 1234.56" price in the narrow 2-column layout. Price+pct share
-  // the second line, and the optional V:/P&L line becomes a third.
   bool showPL = portfolioMode && holdings[idx] > 0 && cellH >= 40;
-  int lines = showPL ? 3 : 2;
-  int y1 = y + cellH * 1 / (lines + 1);
-  int y2 = y + cellH * 2 / (lines + 1);
 
-  tft.setTextDatum(MC_DATUM); tft.setTextColor(C_LABEL(), C_PANEL());
-  tft.drawString(q.sym, x + cellW / 2, y1, mainFont);
+  if (cols == 1) {
+      int y1 = y + cellH / 3;
+      int y2 = y + cellH * 2 / 3;
 
-  String priceStr = formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency));
-  String pctStr = (q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%";
-  int gap = 8;
-  int wPrice = tft.textWidth(priceStr, mainFont);
-  int wPct = tft.textWidth(pctStr, mainFont);
-  int startX = x + (cellW - wPrice - gap - wPct) / 2;
-  tft.setTextDatum(ML_DATUM); tft.setTextColor(C_TEXT(), C_PANEL());
-  tft.drawString(priceStr, startX, y2, mainFont);
-  tft.setTextColor(cPct, C_PANEL());
-  tft.drawString(pctStr, startX + wPrice + gap, y2, mainFont);
+      tft.setTextDatum(ML_DATUM);
+      tft.setTextColor(C_LABEL(), C_PANEL());
+      tft.drawString(q.sym, x + 4, y1, mainFont);
 
-  if (showPL) {
-    double v, pl;
-    if (computePeriodPL(idx, v, pl)) {
-      int y3 = y + cellH * 3 / (lines + 1);
-      tft.setTextDatum(MC_DATUM); tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
-      tft.drawString("V:" + String((long)round(v)) + " P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String((long)round(pl)),
-        x + cellW / 2, y3, 1);
-    }
+      String priceStr = formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency));
+      String pctStr = (q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%";
+
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(C_TEXT(), C_PANEL());
+      tft.drawString(priceStr, x + cellW / 2, y1, mainFont);
+
+      tft.setTextDatum(MR_DATUM);
+      tft.setTextColor(cPct, C_PANEL());
+      tft.drawString(pctStr, x + cellW - 12, y1, mainFont);
+
+      if (showPL) {
+          double v, pl;
+          if (computePeriodPL(idx, v, pl)) {
+              tft.setTextDatum(MC_DATUM);
+              tft.setTextColor(pl >= 0 ? C_UP() : C_DOWN(), C_PANEL());
+              tft.drawString(
+                  "V:" + String((long)round(v)) + " P&L(" + rangeLabel() + "):" +
+                  (pl >= 0 ? "+" : "") + String(pl, 2),
+                  x + cellW / 2, y2, 1);
+          }
+      }
+
+  } else {
+      int lines = showPL ? 3 : 2;
+      int rowH = max(cellH / (lines + 1), tft.fontHeight(mainFont) + 4);
+      int y1 = y + rowH;
+      int y2 = y + rowH * 2;
+
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(C_LABEL(), C_PANEL());
+      tft.drawString(q.sym, x + cellW / 2, y1, mainFont);
+
+      String priceStr = formatPrice(dP, cv ? "PLN " : getCurrencySymbol(q.currency));
+      String pctStr = (q.pct >= 0 ? "+" : "") + String(q.pct, 2) + "%";
+
+      int gap = 6;
+      int wPrice = tft.textWidth(priceStr, mainFont);
+      int wPct = tft.textWidth(pctStr, mainFont);
+      int totalW = wPrice + gap + wPct;
+      int startX = x + (cellW - totalW) / 2;
+
+      tft.setTextDatum(ML_DATUM);
+      tft.setTextColor(C_TEXT(), C_PANEL());
+      tft.drawString(priceStr, startX, y2, mainFont);
+
+      tft.setTextColor(cPct, C_PANEL());
+      tft.drawString(pctStr, startX + wPrice + gap, y2, mainFont);
+
+      if (showPL) {
+          double v, pl;
+          if (computePeriodPL(idx, v, pl)) {
+              int y3 = y + rowH * 3;
+              String vStr = "V:" + String((long)round(v));
+              String plStr = "P&L(" + rangeLabel() + "):" + (pl >= 0 ? "+" : "") + String(pl, 2);
+              uint16_t plCol = pl >= 0 ? C_UP() : C_DOWN();
+
+              tft.setTextDatum(MC_DATUM);
+              tft.setTextColor(plCol, C_PANEL());
+              tft.drawString(vStr + "  " + plStr, x + cellW / 2, y3, 1);
+          }
+      }
   }
 
-  bool br = (alertHigh[idx] > 0 && dP >= alertHigh[idx]) || (alertLow[idx] > 0 && dP <= alertLow[idx]);
-  if (br) tft.fillCircle(x + cellW - 5, y + 5, 3, C_ALERT());
-  else if (alertHigh[idx] > 0 || alertLow[idx] > 0) tft.drawCircle(x + cellW - 5, y + 5, 3, C_ALERT());
+  bool br = (alertHigh[idx] > 0 && dP >= alertHigh[idx]) ||
+            (alertLow[idx] > 0 && dP <= alertLow[idx]);
+
+  if (br)
+      tft.fillCircle(x + cellW - 5, y + 5, 3, C_ALERT());
+  else if (alertHigh[idx] > 0 || alertLow[idx] > 0)
+      tft.drawCircle(x + cellW - 5, y + 5, 3, C_ALERT());
 }
 
 // Fills a grid slot that has no ticker in it (e.g. 5 tickers in a 2x3
@@ -886,11 +927,17 @@ void drawAll() {
 
   static int prevTickerCount = -1;
   static ViewMode prevViewMode = VIEW_GRID;
+  static bool prevPortfolioMode = portfolioMode;
 
   drawHeader();
 
   if (viewMode == VIEW_GRID) {
-    if (tickerCount != prevTickerCount || prevViewMode != VIEW_GRID) {
+    // Toggling portfolioMode changes gridAreaHeight() (footer appears/
+    // disappears), which shifts every cell's height and y-position. Without
+    // clearing here, the old cells' pixels stay on screen while the new
+    // ones draw at their new (different) coordinates -> ghosting/misaligned
+    // rows ("rozjazd") until the next tickerCount/viewMode change wipes it.
+    if (tickerCount != prevTickerCount || prevViewMode != VIEW_GRID || portfolioMode != prevPortfolioMode) {
       tft.fillRect(0, HEADER_H, 320, 240 - HEADER_H, C_BG());
     }
     for (int i = 0; i < tickerCount; i++) drawQuoteGrid(i, quotes[i]);
@@ -906,6 +953,7 @@ void drawAll() {
 
   prevTickerCount = tickerCount;
   prevViewMode = viewMode;
+  prevPortfolioMode = portfolioMode;
   xSemaphoreGive(dataMutex);
 }
 
