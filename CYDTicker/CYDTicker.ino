@@ -131,9 +131,7 @@ static inline uint16_t C_DOWN() { return 0xF800; }
 static inline uint16_t C_FLAT() { return 0x7BEF; }
 static inline uint16_t C_ALERT() { return 0xFFE0; }
 
-// ==========================================
-// HARDWARE & UTILS
-// ==========================================
+// --- HARDWARE & UTILS ---
 void setLED(bool r, bool g, bool b) {
   digitalWrite(LED_R, !r);
   digitalWrite(LED_G, !g);
@@ -222,7 +220,7 @@ String urlEncode(const String &s) {
   return out;
 }
 
-// Protected helper to find ticker index by symbol
+// Find ticker index by symbol. Caller must hold dataMutex.
 int getIndexBySym(const String &sym) {
   for (int i = 0; i < tickerCount; i++) {
     if (tickerData[i].sym == sym) return i;
@@ -230,9 +228,7 @@ int getIndexBySym(const String &sym) {
   return -1;
 }
 
-// ==========================================
-// TRANSACTIONS (COST BASIS)
-// ==========================================
+// --- TRANSACTIONS (COST BASIS) ---
 bool addLot(int i, time_t ts, float qty, float pricePLN) {
   if (i < 0 || i >= MAX_TICKERS) return false;
   if (tickerData[i].lotCount >= MAX_LOTS) return false;
@@ -280,6 +276,13 @@ void computeCostBasis(const TickerState& ts, float &qtyOut, double &costOut) {
   costOut = cost;
 }
 
+// Recompute t.holdings from its lots. Caller must hold dataMutex.
+void refreshHoldings(TickerState &t) {
+  float qty; double cost;
+  computeCostBasis(t, qty, cost);
+  t.holdings = qty;
+}
+
 bool computePLFor(const TickerState &ts, double &valueOut, double &costOut, double &plOut) {
   if (!ts.quote.valid) return false;
   float qty; double cost;
@@ -308,9 +311,7 @@ bool computePeriodPL(int i, double &v, double &p) {
   return computePeriodPLFor(tickerData[i], v, p);
 }
 
-// ==========================================
-// PREFERENCES
-// ==========================================
+// --- PREFERENCES ---
 void loadPrefs() {
   prefs.begin("ticker", true);
   cfg.refreshSec = prefs.getInt("refresh", DEFAULT_REFRESH);
@@ -358,9 +359,7 @@ void loadPrefs() {
 
     tickerData[i].legacyHint = (!hasLots) ? prefs.getFloat(("h" + String(i)).c_str(), 0.0f) : 0.0f;
 
-    float q; double c;
-    computeCostBasis(tickerData[i], q, c);
-    tickerData[i].holdings = q;
+    refreshHoldings(tickerData[i]);
   }
   prefs.end();
 
@@ -417,9 +416,7 @@ void savePrefs() {
   delete[] localData;
 }
 
-// ==========================================
-// MARKET & NETWORK
-// ==========================================
+// --- MARKET & NETWORK ---
 void fetchYahoo(int idx, const String& sym, const String& chartRange) {
   String interval = intervalFor(chartRange);
   HTTPClient http;
@@ -568,7 +565,7 @@ bool fetchHistoricalPricePLN(const String &sym, time_t target, float &pricePLNOu
 
   if (currency == "PLN") { pricePLNOut = closeNative; return true; }
 
-  String qCurr = (currency == "GBP") ? "GBP" : currency;
+  String qCurr = (currency == "GBp") ? "GBP" : currency;
   float mult = (currency == "GBp") ? 0.01f : 1.0f;
 
   float fxClose; String fxCurrencyOut;
@@ -578,22 +575,28 @@ bool fetchHistoricalPricePLN(const String &sym, time_t target, float &pricePLNOu
   return true;
 }
 
-float getTickerValuePLN(int i) {
-  if (!tickerData[i].quote.valid || tickerData[i].holdings <= 0) return -1.0f;
-  float rate = getRateToPLN(tickerData[i].quote.currency);
-  return (rate > 0 ? tickerData[i].quote.price * rate : tickerData[i].quote.price) * tickerData[i].holdings;
+// Portfolio value of a single ticker in PLN, or -1 if not held / no valid quote.
+float valuePLN(const TickerState &t) {
+  if (!t.quote.valid || t.holdings <= 0) return -1.0f;
+  float rate = getRateToPLN(t.quote.currency);
+  return (rate > 0 ? t.quote.price * rate : t.quote.price) * t.holdings;
 }
 
-void sortTickersIfNeeded() {
-  if (!cfg.portfolioMode) return;
-  for (int i = 0; i < tickerCount - 1; i++) {
-    for (int j = 0; j < tickerCount - i - 1; j++) {
-      float vA = getTickerValuePLN(j), vB = getTickerValuePLN(j + 1);
-      if ((vB > vA) || (vA < 0 && vB < 0 && tickerData[j + 1].sym < tickerData[j].sym)) {
-        std::swap(tickerData[j], tickerData[j+1]);
+// Descending sort by portfolio value; unheld tickers sink to the bottom (alphabetically).
+// Shared by the live ticker array (sortTickersIfNeeded) and web UI row ordering (handleRoot).
+void sortByValuePLN(TickerState *arr, int n) {
+  for (int i = 0; i < n - 1; i++) {
+    for (int j = 0; j < n - i - 1; j++) {
+      float vA = valuePLN(arr[j]), vB = valuePLN(arr[j + 1]);
+      if ((vB > vA) || (vA < 0 && vB < 0 && arr[j + 1].sym < arr[j].sym)) {
+        std::swap(arr[j], arr[j + 1]);
       }
     }
   }
+}
+
+void sortTickersIfNeeded() {
+  if (cfg.portfolioMode) sortByValuePLN(tickerData, tickerCount);
 }
 
 void checkAlerts() {
@@ -661,9 +664,7 @@ void fetchTask(void* param) {
   }
 }
 
-// ==========================================
-// DRAWING (TFT)
-// ==========================================
+// --- DRAWING (TFT) ---
 int gridAreaHeight() { return 240 - HEADER_H - (cfg.portfolioMode ? FOOTER_H : 0); }
 
 void drawHeader(bool spinnerOnly = false) {
@@ -942,9 +943,7 @@ void handleTouch() {
   if (!isDown) touchWasDown = false;
 }
 
-// ==========================================
-// WEB SERVER
-// ==========================================
+// --- WEB SERVER ---
 void handleFavicon() {
   server.send(200, "image/svg+xml",
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
@@ -967,21 +966,7 @@ void handleRoot() {
   }
   xSemaphoreGive(dataMutex);
 
-  if (localCfg.portfolioMode) {
-    for (int i = 0; i < localCount - 1; i++) {
-      for (int j = 0; j < localCount - i - 1; j++) {
-        auto valOf = [&](int k) -> float {
-          if (!localData[k].quote.valid || localData[k].holdings <= 0) return -1.0f;
-          float r = getRateToPLN(localData[k].quote.currency);
-          return (r > 0 ? localData[k].quote.price * r : localData[k].quote.price) * localData[k].holdings;
-        };
-        float vA = valOf(j), vB = valOf(j + 1);
-        if ((vB > vA) || (vA < 0 && vB < 0 && localData[j + 1].sym < localData[j].sym)) {
-          std::swap(localData[j], localData[j+1]);
-        }
-      }
-    }
-  }
+  if (localCfg.portfolioMode) sortByValuePLN(localData, localCount);
 
   String tickerList = "";
   for (int i = 0; i < localCount; i++) { if (i) tickerList += ","; tickerList += localData[i].sym; }
@@ -1108,10 +1093,12 @@ void handleSave() {
     String raw = server.arg("tickers");
 
     TickerState* oldData = new TickerState[MAX_TICKERS];
-    int oldCount = tickerCount;
-    for (int k = 0; k < oldCount; k++) oldData[k] = tickerData[k];
+    int oldCount;
 
     xSemaphoreTake(dataMutex, portMAX_DELAY);
+    oldCount = tickerCount;
+    for (int k = 0; k < oldCount; k++) oldData[k] = tickerData[k];
+
     tickerCount = 0;
     int start = 0;
     for (int i = 0; i <= (int)raw.length(); i++) {
@@ -1138,8 +1125,7 @@ void handleSave() {
             tickerData[tickerCount].lotCount = 0;
             tickerData[tickerCount].legacyHint = 0;
           }
-          float q; double c; computeCostBasis(tickerData[tickerCount], q, c);
-          tickerData[tickerCount].holdings = q;
+          refreshHoldings(tickerData[tickerCount]);
           tickerCount++;
         }
         start = i + 1;
@@ -1195,7 +1181,7 @@ void handleAddLot() {
     int t = getIndexBySym(sym);
     if (t >= 0) {
       ok = addLot(t, ts, qty, price);
-      if (ok) { float q; double c; computeCostBasis(tickerData[t], q, c); tickerData[t].holdings = q; }
+      if (ok) refreshHoldings(tickerData[t]);
     }
     xSemaphoreGive(dataMutex);
     if (ok) savePrefs();
@@ -1216,7 +1202,7 @@ void handleDelLot() {
     int t = getIndexBySym(sym);
     if (t >= 0 && k < tickerData[t].lotCount) {
       deleteLot(t, k);
-      float q; double c; computeCostBasis(tickerData[t], q, c); tickerData[t].holdings = q;
+      refreshHoldings(tickerData[t]);
       ok = true;
     }
     xSemaphoreGive(dataMutex);
@@ -1248,9 +1234,8 @@ void handleEditLot() {
       ok = addLot(newT, ts, qty, price);
       if (!ok) addLot(origT, backup.ts, backup.qty, backup.pricePLN);
 
-      float q; double c;
-      computeCostBasis(tickerData[origT], q, c); tickerData[origT].holdings = q;
-      if (newT != origT) { computeCostBasis(tickerData[newT], q, c); tickerData[newT].holdings = q; }
+      refreshHoldings(tickerData[origT]);
+      if (newT != origT) refreshHoldings(tickerData[newT]);
     }
     xSemaphoreGive(dataMutex);
     if (ok) savePrefs();
@@ -1364,9 +1349,7 @@ void handleApiTransactions() {
   server.sendContent("");
 }
 
-// ==========================================
-// SETUP & LOOP
-// ==========================================
+// --- SETUP & LOOP ---
 void setup() {
   Serial.begin(115200); delay(300);
   pinMode(LED_R, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_B, OUTPUT);
