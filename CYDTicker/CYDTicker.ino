@@ -748,7 +748,7 @@ void drawQuoteGrid(int idx, Quote &q) {
 
   float r = getRateToPLN(q.currency); bool cv = (r > 0 && q.currency != "PLN");
   float dP = cv ? q.price * r : q.price;
-  uint16_t cPct = q.pct > 0.05f ? C_UP() : q.pct < -0.05f ? C_DOWN() : C_FLAT();
+  uint16_t cPct = q.pct > 0.0f ? C_UP() : q.pct < 0.0f ? C_DOWN() : C_FLAT();
 
   bool showPL = cfg.portfolioMode && tickerData[idx].holdings > 0 && cellH >= 40;
 
@@ -1008,8 +1008,8 @@ void handleRoot() {
       ? (localData[i].quote.pct >= 0 ? "+" : "") + String(localData[i].quote.pct, 2) + "%" : "--";
     String clr = localData[i].quote.valid ? (localData[i].quote.pct >= 0 ? "#00cc44" : "#ff4444") : "#888";
     String arrow = localData[i].quote.valid
-      ? (localData[i].quote.pct > 0.05f ? "&#9650;"
-         : localData[i].quote.pct < -0.05f ? "&#9660;" : "&mdash;") : "";
+      ? (localData[i].quote.pct > 0.0f ? "&#9650;"
+         : localData[i].quote.pct < 0.0f ? "&#9660;" : "&mdash;") : "";
 
     String valStr = "", plStr = "", plClr = clr;
     double v, p;
